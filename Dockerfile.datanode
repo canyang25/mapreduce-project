@@ -1,0 +1,3 @@
+FROM hdfs
+CMD export CLASSPATH=`$HADOOP_HOME/bin/hdfs classpath --glob` && \
+    hdfs datanode -D dfs.datanode.data.dir=/var/datanode -fs hdfs://boss:9000

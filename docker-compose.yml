@@ -1,0 +1,13 @@
+
+services:
+        nn:
+                image: nn
+                hostname: boss
+                ports:
+                        - "9870:9870"   # Web UI
+                        - "9000:9000"   # RPC service for clients and DataNodes
+
+        dn:
+                image: dn
+                deploy:
+                        replicas: ${NUM_REPLICATION}
