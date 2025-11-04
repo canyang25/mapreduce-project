@@ -2,12 +2,32 @@
 services:
         nn:
                 image: nn
+                build:
+                        context: .
+                        dockerfile: Dockerfile.namenode
                 hostname: boss
                 ports:
                         - "9870:9870"   # Web UI
-                        - "9000:9000"   # RPC service for clients and DataNodes
+                        - "9000:9000"   # RPC service for hdfs
+                        - "50051:50051" # gRPC service for client-master communication
+                        - "8081:8081"   # gRPC service for worker registration
+                volumes:
+                        - /var/run/docker.sock:/var/run/docker.sock
+                environment:
+                        - PYTHONUNBUFFERED=1
 
         dn:
                 image: dn
+                build:
+                        context: .
+                        dockerfile: Dockerfile.datanode
+                ports:
+                        - "50051"       # gRPC service for worker-to-master communication
                 deploy:
                         replicas: ${NUM_REPLICATION}
+
+        client:
+                image: client
+                build:
+                        context: .
+                        dockerfile: Dockerfile.client

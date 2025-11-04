@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package master_client;
+
+service MasterClient {
+    // Get name and port of available datanode
+    rpc MapReduce (MapReduceRequest) returns (MapReduceResponse) {}
+}
+
+message MapReduceRequest {
+    repeated string file_paths = 1;
+    string map = 2;
+    string reduce = 3;
+}
+
+message MapReduceResponse {
+    bool success = 1;
+    repeated string file_paths = 2;
+}

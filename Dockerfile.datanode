@@ -1,3 +1,20 @@
 FROM hdfs
+
+# Install Python gRPC runtime
+RUN pip3 install --break-system-packages grpcio grpcio-tools
+
+# Create app directory
+WORKDIR /app
+
+# Copy proto file and generate gRPC code
+COPY worker_to_master.proto .
+RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. worker_to_master.proto
+
+# Copy worker registration script
+COPY worker.py .
+
+# Start registration helper in background, then start datanode. The worker will retry registration
+# until it succeeds; running it alongside HDFS keeps the container lifecycle tied together.
 CMD export CLASSPATH=`$HADOOP_HOME/bin/hdfs classpath --glob` && \
+    python3 /app/worker.py & \
     hdfs datanode -D dfs.datanode.data.dir=/var/datanode -fs hdfs://boss:9000

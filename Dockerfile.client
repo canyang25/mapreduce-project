@@ -1,0 +1,46 @@
+FROM ubuntu:24.04
+
+# Install Python and Java
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    openjdk-11-jdk \
+    wget curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# HDFS
+RUN wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz && \
+    tar -xf hadoop-3.3.6.tar.gz && \
+    rm hadoop-3.3.6.tar.gz
+
+# --- Environment ---
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV HADOOP_HOME=/hadoop-3.3.6
+ENV HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+# Ensure hdfs, libhdfs, and libjvm are found
+ENV PATH="${PATH}:${JAVA_HOME}/bin:${HADOOP_HOME}/bin"
+ENV LD_LIBRARY_PATH="$HADOOP_HOME/lib/native:$JAVA_HOME/lib/server:$LD_LIBRARY_PATH"
+ENV ARROW_LIBHDFS_DIR="$HADOOP_HOME/lib/native"
+
+
+WORKDIR /app
+
+# Install required packages
+RUN pip3 install --break-system-packages \
+    grpcio grpcio-tools "pyarrow==15.0.2" pandas
+
+# Copy proto file and generate gRPC code
+COPY master_client.proto .
+RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_client.proto
+
+# Copy the client code
+COPY client.py .
+
+# Start wrapper: sets CLASSPATH for libhdfs every run
+RUN printf '%s\n' \
+'#!/bin/sh' \
+'export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)"' \
+'exec python3 -u /app/client.py "$@"' > /usr/local/bin/start-client.sh \
+ && chmod +x /usr/local/bin/start-client.sh
+
+CMD export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)" && exec python3 -u /app/client.py "$@"

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package worker_to_master;
+
+service Registry {
+  rpc Register(WorkerInfo) returns (RegisterReply);
+}
+
+message WorkerInfo {
+  string id = 1;
+}
+
+message RegisterReply {
+  bool ok = 1;
+  string message = 2;
+}

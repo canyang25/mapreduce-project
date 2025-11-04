@@ -1,5 +1,23 @@
 FROM hdfs
+
+# Install Python packages needed for the worker
+RUN pip3 install --break-system-packages grpcio grpcio-tools pyarrow docker
+
+# Create app directory
+WORKDIR /app
+
+# Copy proto file and generate gRPC code
+COPY master_client.proto .
+RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_client.proto
+
+COPY worker_to_master.proto .
+RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. worker_to_master.proto
+
+# Copy the worker code
+COPY master.py .
+
 CMD export CLASSPATH=`$HADOOP_HOME/bin/hdfs classpath --glob` && \
     hdfs namenode -format &&\
-    hdfs namenode -D dfs.namenode.stale.datanode.interval=10000 -D dfs.namenode.heartbeat.recheck-interval=30000 -fs hdfs://boss:9000
+    hdfs namenode -D dfs.namenode.stale.datanode.interval=10000 -D dfs.namenode.heartbeat.recheck-interval=30000 -fs hdfs://boss:9000 & \
+    python3 -u /app/master.py
     
