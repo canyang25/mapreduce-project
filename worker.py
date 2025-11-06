@@ -45,9 +45,25 @@ def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_de
     raise RuntimeError(f"Failed to register worker after {max_attempts} attempts") from last_exc
 
 
+def heartbeat_loop(namenode_host: str, namenode_port: int, worker_id: str, interval_seconds: float = 5.0):
+    """Continuously send heartbeat to master to indicate liveness.
+
+    Runs indefinitely; logs warnings on failures but keeps retrying.
+    """
+    while True:
+        try:
+            with grpc.insecure_channel(f"{namenode_host}:{namenode_port}") as ch:
+                stub = worker_to_master_pb2_grpc.RegistryStub(ch)
+                stub.Heartbeat(worker_to_master_pb2.HeartbeatRequest(worker_id=worker_id))
+        except Exception as e:
+            LOG.warning("Heartbeat failed: %s", e)
+        time.sleep(interval_seconds)
+
 if __name__ == "__main__":
     try:
-        register_with_retry('boss', 8081)
+        resp = register_with_retry('boss', 8081)
+        # Start the heartbeat loop in the foreground; this container's lifecycle is tied to the datanode
+        heartbeat_loop('boss', 8081, socket.gethostname())
     except Exception as e:
         LOG.error("Worker registration failed: %s", e)
         raise

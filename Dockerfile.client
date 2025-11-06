@@ -14,7 +14,11 @@ RUN wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
     rm hadoop-3.3.6.tar.gz
 
 # --- Environment ---
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+# Auto-detect Java path (works on both ARM and AMD64)
+RUN JAVA_DIR=$(ls -d /usr/lib/jvm/java-11-openjdk-* 2>/dev/null | head -1) && \
+    ln -sf ${JAVA_DIR} /usr/lib/jvm/java-11-openjdk && \
+    echo "Found Java at: ${JAVA_DIR}"
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
 ENV HADOOP_HOME=/hadoop-3.3.6
 ENV HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
 # Ensure hdfs, libhdfs, and libjvm are found

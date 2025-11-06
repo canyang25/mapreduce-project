@@ -4,6 +4,8 @@ package worker_to_master;
 
 service Registry {
   rpc Register(WorkerInfo) returns (RegisterReply);
+  // Worker heartbeat to indicate liveness
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
 }
 
 message WorkerInfo {
@@ -11,6 +13,16 @@ message WorkerInfo {
 }
 
 message RegisterReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+// Heartbeat request/response for liveness checks
+message HeartbeatRequest {
+  string worker_id = 1;
+}
+
+message HeartbeatReply {
   bool ok = 1;
   string message = 2;
 }

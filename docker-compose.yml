@@ -1,10 +1,18 @@
 
 services:
+        hdfs:
+                image: hdfs
+                build:
+                        context: .
+                        dockerfile: Dockerfile.hdfs
+
         nn:
                 image: nn
                 build:
                         context: .
                         dockerfile: Dockerfile.namenode
+                depends_on:
+                        - hdfs
                 hostname: boss
                 ports:
                         - "9870:9870"   # Web UI
@@ -21,6 +29,8 @@ services:
                 build:
                         context: .
                         dockerfile: Dockerfile.datanode
+                depends_on:
+                        - hdfs
                 ports:
                         - "50051"       # gRPC service for worker-to-master communication
                 deploy:

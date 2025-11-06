@@ -4,6 +4,11 @@ RUN apt-get update; apt-get install -y wget curl openjdk-11-jdk python3-pip ipro
 # HDFS
 RUN wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz; tar -xf hadoop-3.3.6.tar.gz; rm hadoop-3.3.6.tar.gz
 
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+# Auto-detect Java path (works on both ARM and AMD64)
+# Find Java directory and create symlink for consistent access
+RUN JAVA_DIR=$(ls -d /usr/lib/jvm/java-11-openjdk-* 2>/dev/null | head -1) && \
+    ln -sf ${JAVA_DIR} /usr/lib/jvm/java-11-openjdk && \
+    echo "Found Java at: ${JAVA_DIR}"
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
 ENV PATH="${PATH}:/hadoop-3.3.6/bin"
 ENV HADOOP_HOME=/hadoop-3.3.6
