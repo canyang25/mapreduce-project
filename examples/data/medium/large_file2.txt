@@ -1,0 +1,11 @@
+Distributed systems are networks of independent computers that work together to appear as a single coherent system. They are designed to handle large-scale computations and data storage that would be impossible for a single machine. Key characteristics include fault tolerance, scalability, and concurrency.
+
+Fault tolerance is the ability of a system to continue operating properly in the event of failure of some of its components. In distributed systems, this often means having redundant components that can take over when others fail. Replication is a common technique where data is stored on multiple machines to ensure availability.
+
+Scalability refers to the capability of a system to handle growing amounts of work by adding resources. Horizontal scaling involves adding more machines to the system, while vertical scaling involves adding more power to existing machines. Distributed systems typically use horizontal scaling because it is more cost-effective and allows for better fault tolerance.
+
+Concurrency in distributed systems means that multiple operations can happen simultaneously across different nodes. This requires careful coordination to ensure consistency and avoid conflicts. Distributed consensus algorithms like Paxos and Raft help systems agree on state across multiple nodes.
+
+Load balancing distributes incoming requests across multiple servers to ensure no single server becomes overwhelmed. This improves both performance and reliability. Common load balancing strategies include round-robin, least connections, and geographic distribution.
+
+Distributed systems face many challenges including network latency, partial failures, and maintaining consistency. CAP theorem states that a distributed system cannot simultaneously guarantee consistency, availability, and partition tolerance. System designers must choose which two properties to prioritize based on their specific requirements.

@@ -1,0 +1,1 @@
+MapReduce is a distributed computing paradigm. Distributed systems require coordination between nodes. MapReduce splits work into map and reduce phases. The map phase processes input data in parallel. The reduce phase aggregates results from map tasks.

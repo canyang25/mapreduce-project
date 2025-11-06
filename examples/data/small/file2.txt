@@ -1,0 +1,1 @@
+Python is a programming language. Programming requires practice and dedication. Many developers use Python for data science. Data science involves analyzing large datasets. Machine learning is a subset of data science.

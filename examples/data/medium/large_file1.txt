@@ -1,0 +1,9 @@
+Apache Hadoop is an open-source software framework for distributed storage and processing of big data sets using the MapReduce programming model. Hadoop was originally designed for computer clusters built from commodity hardware. The framework is composed of several modules including Hadoop Common, Hadoop Distributed File System (HDFS), Hadoop YARN, and Hadoop MapReduce.
+
+HDFS is a distributed file system that provides high-throughput access to application data. It is designed to be deployed on low-cost hardware and provides high fault tolerance by replicating data across multiple nodes. HDFS stores large files across multiple machines and achieves reliability by replicating the data across multiple hosts.
+
+The MapReduce framework allows for distributed processing of large data sets across clusters of computers. It works by breaking down a job into smaller tasks that can be processed in parallel. The map function processes input data and produces intermediate key-value pairs. The reduce function then aggregates these intermediate results to produce the final output.
+
+Hadoop has become a popular choice for big data processing because it can scale from a single server to thousands of machines. Each machine offers local computation and storage. The framework automatically handles task scheduling and monitoring, re-executing failed tasks, and balancing the load across the cluster.
+
+Many organizations use Hadoop for data warehousing, log processing, recommendation systems, and scientific computing. The ecosystem has grown to include many related projects like Apache Spark, Apache Hive, Apache Pig, and Apache HBase. These tools provide higher-level abstractions and additional functionality on top of the core Hadoop framework.

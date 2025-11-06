@@ -36,6 +36,9 @@ RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_c
 # Copy the client code
 COPY client.py .
 
+# Copy examples directory (for upload script and test data)
+COPY examples/ ./examples/
+
 # Start wrapper: sets CLASSPATH for libhdfs every run
 RUN printf '%s\n' \
 '#!/bin/sh' \
