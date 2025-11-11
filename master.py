@@ -78,12 +78,12 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
             with grpc.insecure_channel(f"{first_worker}:{WORKER_PORT}") as ch:
                 stub = master_to_worker_pb2_grpc.WorkerTaskStub(ch)
                 map_resp = stub.RunMap(req)
-                if not map_resp.success:
-                    raise RuntimeError("Map task failed on worker")
+                if not map_resp.ok:
+                    raise RuntimeError("Map task failed. Message: " + map_resp.message)
 
             return master_client_pb2.MapReduceResponse(
                 success=True,
-                file_paths=[]
+                file_paths=[],
             )
         except Exception as e:
             LOG.error("MapReduce failed: %s", str(e))

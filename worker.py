@@ -69,12 +69,12 @@ def heartbeat_loop(namenode_host: str, namenode_port: int, worker_id: str, inter
 
 class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
     def RunMap(self, request, context):
-        LOG.info(f"{WORKER_ID} : Running map task {request.task_id}")
+        LOG.info(f"Worker : {WORKER_ID} running map task {request.task_id}")
         # TODO: run mapper script
         return master_to_worker_pb2.Ack(ok=True, message="map done")
 
     def RunReduce(self, request, context):
-        LOG.info(f"{WORKER_ID} : Running reduce task {request.task_id}")
+        LOG.info(f"Worker : {WORKER_ID} running reduce task {request.task_id}")
         # TODO: run reducer script
         return master_to_worker_pb2.Ack(ok=True, message="reduce done")
     

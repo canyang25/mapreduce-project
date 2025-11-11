@@ -18,4 +18,5 @@ message MapReduceRequest {
 message MapReduceResponse {
     bool success = 1;
     repeated string file_paths = 2;
+    string message = 3;
 }
