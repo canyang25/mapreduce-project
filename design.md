@@ -7,6 +7,7 @@ This project implements a distributed MapReduce system using Docker Compose with
 - Canyang Zhao
 - Sid Ganesh 
 - Ryan Murphy 
+- Anirudh Jagannath
 
 ## Architecture
 

@@ -12,6 +12,9 @@ import docker
 import master_client_pb2
 import master_client_pb2_grpc
 
+import master_to_worker_pb2
+import master_to_worker_pb2_grpc
+
 from google.protobuf import empty_pb2
 import worker_to_master_pb2
 import worker_to_master_pb2_grpc
@@ -23,6 +26,8 @@ logging.basicConfig(
     format='[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+WORKER_PORT = 50051
 
 # Set up HDFS classpath (optional - health checking doesn't need it)
 try:
@@ -49,7 +54,33 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
     def MapReduce(self, request, context):
         LOG.info("Received MapReduce request")
         try:
-            # TODO: Implement actual MapReduce logic
+            # TODO: Implement partitioning logic
+            data_paths = request.file_paths
+            map_fn = request.map
+            reduce_fn = request.reduce
+            job_path = request.job_path
+            num_reducers = request.num_reducers
+            req = master_to_worker_pb2.MapTaskRequest(
+                job_id=1,
+                job_path=job_path,
+                function_name=map_fn,
+                data_paths=data_paths,
+                num_reducers=num_reducers,
+                output_dir = f"{job_path}/intermediate",
+                task_id=1
+            )
+            # For test, assign all map tasks to the first available worker
+            workers = STATE.list_active_workers()
+
+            if not workers:
+                raise RuntimeError("No active workers available")
+            first_worker = workers[0]
+            with grpc.insecure_channel(f"{first_worker}:{WORKER_PORT}") as ch:
+                stub = master_to_worker_pb2_grpc.WorkerTaskStub(ch)
+                map_resp = stub.RunMap(req)
+                if not map_resp.success:
+                    raise RuntimeError("Map task failed on worker")
+
             return master_client_pb2.MapReduceResponse(
                 success=True,
                 file_paths=[]
@@ -77,7 +108,8 @@ class _State:
         self._workers = {}
 
     def upsert(self, info):
-        key = f"{info[0]}:{info[1]}"
+       #key = f"{info[0]}:{info[1]}"
+        key = f"{info[0]}"
         with self._lock:
             now = time.time()
             self._workers[key] = {"active": True, "last_heartbeat": now}
@@ -145,7 +177,8 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
             ports_dict = port_map(request.worker_id)
             for val in ports_dict.values():
                 port = val[0]["HostPort"]
-            key = f"{request.worker_id}:{port}"
+            #key = f"{request.worker_id}:{port}"
+            key = f"{request.worker_id}"
             STATE.mark_heartbeat(key)
             return worker_to_master_pb2.HeartbeatReply(ok=True, message="pong")
         except Exception as e:

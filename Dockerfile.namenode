@@ -13,6 +13,9 @@ RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_c
 COPY worker_to_master.proto .
 RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. worker_to_master.proto
 
+COPY master_to_worker.proto .
+RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_to_worker.proto
+
 # Copy the worker code
 COPY master.py .
 

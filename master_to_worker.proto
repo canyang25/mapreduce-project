@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package master_to_worker;
+
+// Request sent from master to a worker to run a map task.
+message MapTaskRequest {
+	int32 job_id = 1;
+	string job_path = 2; 	// e.g. `/jobs/code/word_count.py`
+	string function_name = 3;
+	repeated string data_paths = 4;
+	int32 num_reducers = 5;
+    string output_dir = 6;
+	int32 task_id = 7;
+}
+
+// Request sent from master to a worker to run a reduce task.
+message ReduceTaskRequest {
+	int32 job_id = 1;
+	string job_path = 2;
+	string function_name = 3;
+	repeated string partition_paths = 4;
+    string output_path = 5;
+	int32 task_id = 6;
+}
+
+// Standard acknowledgement returned by workers after running a task.
+message Ack {
+	bool ok = 1;
+	string message = 2;
+}
+
+// Service exposed by workers to accept tasks from the master.
+service WorkerTask {
+	rpc RunMap(MapTaskRequest) returns (Ack);
+	rpc RunReduce(ReduceTaskRequest) returns (Ack);
+}
+

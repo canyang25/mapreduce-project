@@ -11,6 +11,8 @@ message MapReduceRequest {
     repeated string file_paths = 1;
     string map = 2;
     string reduce = 3;
+    string job_path = 4;
+    int32 num_reducers = 5;
 }
 
 message MapReduceResponse {
