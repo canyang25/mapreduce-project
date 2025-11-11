@@ -157,9 +157,16 @@ def output_bindings(ports_dict):
 class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
     def Register(self, request: worker_to_master_pb2.WorkerInfo, context): 
         ports_dict = port_map(request.id)
+        port = None
         for val in ports_dict.values():
-            port = val[0]["HostPort"]
+            if val and len(val) > 0:
+                port = val[0]["HostPort"]
+                break  # Get first port and stop
         # LOG.info("\n".join(output_bindings(ports_dict)))
+
+        if port is None:
+            LOG.error("No published port found for worker %s", request.id)
+            return worker_to_master_pb2.RegisterReply(ok=False, message="No published port found")
 
         STATE.upsert((request.id, port))
         LOG.info("Registered worker %s", request.id)
@@ -175,11 +182,15 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
         # The worker_id is the container id; map to a key by discovering its published port
         try:
             ports_dict = port_map(request.worker_id)
+            port = None
             for val in ports_dict.values():
-                port = val[0]["HostPort"]
+                if val and len(val) > 0:
+                    port = val[0]["HostPort"]
+                    break  # Get first port and stop
             #key = f"{request.worker_id}:{port}"
             key = f"{request.worker_id}"
             STATE.mark_heartbeat(key)
+            LOG.debug("Heartbeat received from worker: %s", key)
             return worker_to_master_pb2.HeartbeatReply(ok=True, message="pong")
         except Exception as e:
             LOG.warning("Heartbeat handling failed for %s: %s", request.worker_id, e)
@@ -206,10 +217,21 @@ def serve_both():
     # Background health monitor
     def health_monitor():
         timeout_s = 15.0
+        check_count = 0
         while True:
             active = set(STATE.list_active_workers(timeout_s))
             all_workers = set(STATE.list_workers())
             dead = all_workers - active
+            
+            # Report status periodically (every 12 checks = 1 minute)
+            check_count += 1
+            if check_count % 12 == 0:
+                if active:
+                    LOG.info("Health check: %d/%d workers active [%s]", 
+                            len(active), len(all_workers), "; ".join(sorted(active)))
+                elif all_workers:
+                    LOG.warning("Health check: 0/%d workers active (all dead!)", len(all_workers))
+            
             for key in dead:
                 LOG.warning("Removing inactive worker: %s", key)
                 STATE.remove(key)

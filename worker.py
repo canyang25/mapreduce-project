@@ -2,6 +2,7 @@ import os
 import socket
 import re
 import time
+import random
 import logging
 import grpc
 import threading
@@ -55,17 +56,33 @@ def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_de
 
 def heartbeat_loop(namenode_host: str, namenode_port: int, worker_id: str, interval_seconds: float = 5.0):
     """Continuously send heartbeat to master to indicate liveness.
-
+    
+    Uses jitter to prevent thundering herd problem when multiple workers heartbeat simultaneously.
     Runs indefinitely; logs warnings on failures but keeps retrying.
     """
+    # Add initial random delay to spread out worker heartbeats (0-2 seconds)
+    initial_jitter = random.uniform(0, 2.0)
+    LOG.info("Starting heartbeat loop with %.2fs initial delay", initial_jitter)
+    time.sleep(initial_jitter)
+    
     while True:
+        # Calculate next sleep time with jitter
+        jitter = interval_seconds * 0.1 * (2 * random.random() - 1)
+        sleep_time = interval_seconds + jitter
+        
         try:
             with grpc.insecure_channel(f"{namenode_host}:{namenode_port}") as ch:
                 stub = worker_to_master_pb2_grpc.RegistryStub(ch)
-                stub.Heartbeat(worker_to_master_pb2.HeartbeatRequest(worker_id=worker_id))
+                response = stub.Heartbeat(worker_to_master_pb2.HeartbeatRequest(worker_id=worker_id))
+                
+                if not response.ok:
+                    LOG.warning("Heartbeat rejected by master: %s", response.message)
+                else:
+                    LOG.debug("Heartbeat acknowledged by master (next in ~%.1fs)", sleep_time)
         except Exception as e:
-            LOG.warning("Heartbeat failed: %s", e)
-        time.sleep(interval_seconds)
+            LOG.warning("Heartbeat failed: %s (will retry in ~%.1fs)", e, sleep_time)
+        
+        time.sleep(sleep_time)
 
 class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
     def RunMap(self, request, context):
