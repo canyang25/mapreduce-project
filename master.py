@@ -104,15 +104,14 @@ class _State:
     """In-memory worker registry."""
     def __init__(self):
         self._lock = threading.Lock()
-        # key: "host:port" -> {"active": bool, "last_heartbeat": float}
+        # key: worker_id -> {"active": bool, "last_heartbeat": float}
         self._workers = {}
 
-    def upsert(self, info):
-       #key = f"{info[0]}:{info[1]}"
-        key = f"{info[0]}"
+    def upsert(self, worker_id: str):
+        """Register or update a worker by its ID."""
         with self._lock:
             now = time.time()
-            self._workers[key] = {"active": True, "last_heartbeat": now}
+            self._workers[worker_id] = {"active": True, "last_heartbeat": now}
 
     def mark_heartbeat(self, key: str):
         with self._lock:
@@ -156,13 +155,9 @@ def output_bindings(ports_dict):
 
 class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
     def Register(self, request: worker_to_master_pb2.WorkerInfo, context): 
-        ports_dict = port_map(request.id)
-        for val in ports_dict.values():
-            port = val[0]["HostPort"]
-        # LOG.info("\n".join(output_bindings(ports_dict)))
-
-        STATE.upsert((request.id, port))
-        LOG.info("Registered worker %s", request.id)
+        worker_id = request.id
+        STATE.upsert(worker_id)
+        LOG.info("Registered worker %s", worker_id)
         
         # Log current worker pool
         workers = STATE.list_workers()
@@ -172,14 +167,11 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
         return worker_to_master_pb2.RegisterReply(ok=True, message="registered")
 
     def Heartbeat(self, request: worker_to_master_pb2.HeartbeatRequest, context):
-        # The worker_id is the container id; map to a key by discovering its published port
+        """Process heartbeat from worker. Uses worker_id as key."""
         try:
-            ports_dict = port_map(request.worker_id)
-            for val in ports_dict.values():
-                port = val[0]["HostPort"]
-            #key = f"{request.worker_id}:{port}"
-            key = f"{request.worker_id}"
-            STATE.mark_heartbeat(key)
+            worker_id = request.worker_id
+            STATE.mark_heartbeat(worker_id)
+            LOG.debug("Heartbeat received from worker: %s", worker_id)
             return worker_to_master_pb2.HeartbeatReply(ok=True, message="pong")
         except Exception as e:
             LOG.warning("Heartbeat handling failed for %s: %s", request.worker_id, e)
@@ -206,10 +198,21 @@ def serve_both():
     # Background health monitor
     def health_monitor():
         timeout_s = 15.0
+        check_count = 0
         while True:
             active = set(STATE.list_active_workers(timeout_s))
             all_workers = set(STATE.list_workers())
             dead = all_workers - active
+            
+            # Report status periodically (every 12 checks = 1 minute)
+            check_count += 1
+            if check_count % 12 == 0:
+                if active:
+                    LOG.info("Health check: %d/%d workers active [%s]", 
+                            len(active), len(all_workers), "; ".join(sorted(active)))
+                elif all_workers:
+                    LOG.warning("Health check: 0/%d workers active (all dead!)", len(all_workers))
+            
             for key in dead:
                 LOG.warning("Removing inactive worker: %s", key)
                 STATE.remove(key)

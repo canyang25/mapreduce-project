@@ -54,6 +54,13 @@ We plan to include different size levels of data partitioned into separate direc
 4. **Fault Tolerance Tests**: Worker failure scenarios
 
 ## Special Features
-### Worker Failure Handling
-- Worker failure handling with periodic pings from master
-- Exponential backoff + jitter to prevent thundering herd problem
+### Worker Health Monitoring
+- Workers send heartbeats to master every ~5 seconds with jitter
+- Master detects failed workers within 15 seconds and removes them from pool
+- Periodic health status reports every 60 seconds
+- Heartbeat response validation and detailed logging
+
+**Testing:**
+```bash
+./test_health_check.sh  # Runs test suite
+```
