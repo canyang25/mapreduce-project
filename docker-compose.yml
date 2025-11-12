@@ -34,7 +34,7 @@ services:
                 ports:
                         - "50051"       # gRPC service for worker-to-master communication
                 deploy:
-                        replicas: ${NUM_REPLICATION}
+                        replicas: ${NUM_REPLICATION:-1}
 
         client:
                 image: client

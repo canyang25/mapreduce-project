@@ -4,12 +4,20 @@ import re
 import time
 import logging
 import grpc
+import threading
+from concurrent import futures
 
 import worker_to_master_pb2
 import worker_to_master_pb2_grpc
 
+import master_to_worker_pb2
+import master_to_worker_pb2_grpc
+
 LOG = logging.getLogger("worker")
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
+TASK_SERVER_PORT = 50051
+WORKER_ID = socket.gethostname()
 
 
 def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_delay=1.0):
@@ -59,11 +67,40 @@ def heartbeat_loop(namenode_host: str, namenode_port: int, worker_id: str, inter
             LOG.warning("Heartbeat failed: %s", e)
         time.sleep(interval_seconds)
 
+class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
+    def RunMap(self, request, context):
+        LOG.info(f"Worker : {WORKER_ID} running map task {request.task_id}")
+        # TODO: run mapper script
+        return master_to_worker_pb2.Ack(ok=True, message="map done")
+
+    def RunReduce(self, request, context):
+        LOG.info(f"Worker : {WORKER_ID} running reduce task {request.task_id}")
+        # TODO: run reducer script
+        return master_to_worker_pb2.Ack(ok=True, message="reduce done")
+    
+def start_task_server():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    master_to_worker_pb2_grpc.add_WorkerTaskServicer_to_server(
+        WorkerTaskServicer(), server
+    )
+    server.add_insecure_port(f"[::]:{TASK_SERVER_PORT}")
+    server.start()
+    LOG.info(f"Worker task server listening on {TASK_SERVER_PORT}")
+    server.wait_for_termination()
+
 if __name__ == "__main__":
     try:
         resp = register_with_retry('boss', 8081)
-        # Start the heartbeat loop in the foreground; this container's lifecycle is tied to the datanode
-        heartbeat_loop('boss', 8081, socket.gethostname())
+        # Changed heartbeat to run in background thread
+        # heartbeat_loop('boss', 8081, socket.gethostname())
+        threading.Thread(
+            target=heartbeat_loop,
+            args=("boss", 8081, WORKER_ID),
+            daemon=True
+        ).start()
+        # Start task server to accept tasks from master
+        start_task_server()
     except Exception as e:
         LOG.error("Worker registration failed: %s", e)
         raise
+
