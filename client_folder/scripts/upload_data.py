@@ -2,15 +2,15 @@
 """
 Upload sample data files to HDFS.
 
-This script uploads all files from examples/data/ to HDFS directories,
+This script uploads all files from client_folder/data/ to HDFS directories,
 making them available for MapReduce jobs.
 
 Usage:
     # From the project root:
-    python3 examples/scripts/upload_data.py
+    python3 client_folder/scripts/upload_data.py
     
     # Or from within a Docker container:
-    python3 /app/examples/scripts/upload_data.py
+    python3 /app/client_folder/scripts/upload_data.py
 """
 
 import os
@@ -26,7 +26,7 @@ sys.path.insert(0, str(project_root))
 if '/app' not in str(project_root):
     sys.path.insert(0, '/app')
 
-from client import Client
+from client_folder.scripts.client import Client
 import time
 
 
@@ -82,51 +82,51 @@ def main():
     print("Waiting for HDFS to be ready...")
     time.sleep(3)
     
-    # Get the script's directory and find examples/data
+    # Get the script's directory and find client_folder/data
     # Try multiple possible locations (local dev vs Docker)
     script_dir = Path(__file__).parent
     possible_roots = [
-        script_dir.parent.parent,  # Local: examples/scripts/ -> project root
-        Path("/app"),              # Docker: /app/examples/scripts/
+        script_dir.parent.parent,  # Local: client_folder/scripts/ -> project root
+        Path("/app"),              # Docker: /app/client_folder/scripts/
         Path.cwd(),                # Current working directory
     ]
     
     data_dir = None
     for root in possible_roots:
-        candidate = root / "examples" / "data"
+        candidate = root / "client_folder" / "data"
         if candidate.exists():
             data_dir = candidate
             break
     
     if data_dir is None:
-        print("ERROR: Could not find examples/data directory")
-        print(f"Tried: {[str(r / 'examples' / 'data') for r in possible_roots]}")
+        print("ERROR: Could not find client_folder/data directory")
+        print(f"Tried: {[str(r / 'client_folder' / 'data') for r in possible_roots]}")
         return
     
     # Upload small dataset
     small_dir = data_dir / "small"
     if small_dir.exists():
-        upload_directory(client, small_dir, "/examples/data/small")
+        upload_directory(client, small_dir, "/client_folder/data/small")
     
     # Upload medium dataset
     medium_dir = data_dir / "medium"
     if medium_dir.exists():
-        upload_directory(client, medium_dir, "/examples/data/medium")
+        upload_directory(client, medium_dir, "/client_folder/data/medium")
     
     print("\n=== Upload Complete ===")
     print("\nYou can now use these files in MapReduce jobs:")
     print("  Small dataset:")
-    print("    /examples/data/small/file1.txt")
-    print("    /examples/data/small/file2.txt")
-    print("    /examples/data/small/file3.txt")
+    print("    /client_folder/data/small/file1.txt")
+    print("    /client_folder/data/small/file2.txt")
+    print("    /client_folder/data/small/file3.txt")
     print("  Medium dataset:")
-    print("    /examples/data/medium/large_file1.txt")
-    print("    /examples/data/medium/large_file2.txt")
+    print("    /client_folder/data/medium/large_file1.txt")
+    print("    /client_folder/data/medium/large_file2.txt")
     
     # Verify by reading one file back
     print("\n=== Verification ===")
     try:
-        test_content = client.read_file("/examples/data/small/file1.txt")
+        test_content = client.read_file("/client_folder/data/small/file1.txt")
         print(f"✓ Successfully read back test file ({len(test_content)} bytes)")
     except Exception as e:
         print(f"⚠ Could not verify upload: {e}")
