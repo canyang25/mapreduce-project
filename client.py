@@ -23,12 +23,12 @@ class Client:
             port=namenode_hdfs_port
         )
     
-    def map_reduce(self, file_paths, map, reduce):
+    def map_reduce(self, file_paths, map, reduce, num_reducers=1):
         """Read a file through the worker service"""
         try:
-            request = master_client_pb2.MapReduceRequest(file_paths=file_paths, map=map, reduce=reduce)
+            request = master_client_pb2.MapReduceRequest(file_paths=file_paths, map=map, reduce=reduce, num_reducers=num_reducers)
             response = self.stub.MapReduce(request)
-            if response.success:
+            if response.ok:
                 return response
             else:
                 raise Exception(f"Failed to read file via worker: {response.error_message}")
@@ -78,7 +78,7 @@ def main():
     try:
         print("Scheduling MapReduce job...")
         response = client.map_reduce(["/test/hello.txt"], "map function", "reduce function")
-        print(f"MapReduce response: success={response.success}, file_paths={response.file_paths}")
+        print(f"MapReduce response: success={response.ok}, job_id={response.job_id}")
 
     except Exception as e:
         print(f"Error using worker: {str(e)}")

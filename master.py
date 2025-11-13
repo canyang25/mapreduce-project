@@ -19,6 +19,8 @@ from google.protobuf import empty_pb2
 import worker_to_master_pb2
 import worker_to_master_pb2_grpc
 
+from collections import deque
+
 # Set up logging
 LOG = logging.getLogger("master")
 logging.basicConfig(
@@ -35,6 +37,88 @@ try:
 except Exception as e:
     LOG.warning("Could not set HDFS classpath (HDFS may not be ready): %s", e)
 
+class _State:
+    """In-memory worker registry."""
+    def __init__(self):
+        self._worker_lock = threading.Lock() # private lock for worker info
+        self._workers = {} # key: worker_id -> {"active": bool, "last_heartbeat": float, "idle": bool}
+        self._idle_workers = 0
+
+        self.job_lock = threading.Lock() # public lock for job info
+        # job id -> {"map_fn": str, "reduce_fn": str, "job_path": str, "num_reducers": int, "pending_maps" : deque, 
+        #           "pending_reduces": deque, maps_left: int, reduces_left: int, "stage": str}
+        self.jobs = {}
+        self.job_counter = 0
+        self.assigned_tasks = {} # worker_id -> task dict
+
+    def upsert(self, worker_id: str):
+        """Register or update a worker by its ID."""
+        now = time.time()
+        with self._worker_lock:
+                self._workers[worker_id] = {"last_heartbeat": now, "idle": True, "task": None, "channel": None}
+                self._idle_workers += 1
+
+    def mark_heartbeat(self, key: str):
+        with self._worker_lock:
+            if key in self._workers:
+                self._workers[key]["last_heartbeat"] = time.time()
+                #self._workers[key]["active"] = True
+
+    def remove(self, key: str):
+        with self._worker_lock:
+            worker = self._workers.pop(key, None)
+            if worker and worker["idle"]:
+                self._idle_workers -= 1
+        if worker:
+            # Reschedule failed task
+            worker["channel"].close() if worker["channel"] else None
+            task = self.assigned_tasks.pop(key, None)
+            self.retry_task(task)
+    def list_workers(self):
+        with self._worker_lock:
+            return list(self._workers.keys())
+
+    def list_active_workers(self, timeout_seconds: float = 15.0):
+        cutoff = time.time() - timeout_seconds
+        with self._worker_lock:
+            return [k for k, v in self._workers.items() if v["last_heartbeat"] >= cutoff]
+    def assign_if_idle(self) -> str | None:
+        """Returns an idle worker ID and marks it busy, or None if none available."""
+        with self._worker_lock:
+            if self._idle_workers == 0:
+                return None
+            for k, v in self._workers.items():
+                if v["idle"]:
+                    v["idle"] = False
+                    self._idle_workers -= 1
+                    return k
+        return None
+    def mark_idle(self, worker_id: str):
+        with self._worker_lock:
+            if worker_id in self._workers and not self._workers[worker_id]["idle"]:
+                self._workers[worker_id]["idle"] = True
+                self._idle_workers += 1
+    def retry_task(self, task: dict):
+        task_type = task.pop("type", None)
+        job_id = task.pop("job_id", None)
+        if job_id is None:
+            return
+        with self.job_lock:
+            if job_id in self.jobs:
+                if task_type == "map":
+                    self.jobs[job_id]["pending_maps"].append(task)
+                elif task_type == "reduce":
+                    self.jobs[job_id]["pending_reduces"].append(task)
+    def create_channel(self, worker_id: str):
+        with self._worker_lock:
+            if worker_id in self._workers:
+                channel = grpc.insecure_channel(f"{worker_id}:{WORKER_PORT}")
+                self._workers[worker_id]["channel"] = channel
+                return channel
+        return None
+
+
+STATE = _State()
 
 class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
     def __init__(self):
@@ -53,87 +137,193 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
     
     def MapReduce(self, request, context):
         LOG.info("Received MapReduce request")
+        if not self.hdfs_client:
+            try:
+                LOG.info("Establishing HDFS connection...")
+                self.hdfs_client = pa.fs.HadoopFileSystem(
+                    host='boss',
+                    port=9000
+                )
+            except Exception as e:
+                LOG.error("HDFS connection failed: %s", e)
+                return master_client_pb2.MapReduceResponse(
+                    ok=False,
+                    file_paths=[]
+                )
         try:
-            # TODO: Implement partitioning logic
-            data_paths = request.file_paths
-            map_fn = request.map
-            reduce_fn = request.reduce
-            job_path = request.job_path
-            num_reducers = request.num_reducers
-            req = master_to_worker_pb2.MapTaskRequest(
-                job_id=1,
-                job_path=job_path,
-                function_name=map_fn,
-                data_paths=data_paths,
-                num_reducers=num_reducers,
-                output_dir = f"{job_path}/intermediate",
-                task_id=1
-            )
             # For test, assign all map tasks to the first available worker
-            workers = STATE.list_active_workers()
-
-            if not workers:
-                raise RuntimeError("No active workers available")
-            first_worker = workers[0]
-            with grpc.insecure_channel(f"{first_worker}:{WORKER_PORT}") as ch:
-                stub = master_to_worker_pb2_grpc.WorkerTaskStub(ch)
-                map_resp = stub.RunMap(req)
-                if not map_resp.ok:
-                    raise RuntimeError("Map task failed. Message: " + map_resp.message)
-
+            job_id = self.create_tasks(request)
+            LOG.info(f"Created job {job_id} with pending tasks")
             return master_client_pb2.MapReduceResponse(
-                success=True,
-                file_paths=[],
+                ok=True,
+                message="Job scheduled",
+                job_id=job_id
             )
         except Exception as e:
             LOG.error("MapReduce failed: %s", str(e))
             return master_client_pb2.MapReduceResponse(
-                success=False,
-                file_paths=[]
+                ok=False,
+                message="MapReduce failed: " + str(e)
             )
+    def create_tasks(self, request : master_client_pb2.MapReduceRequest) -> int:
+        data_paths = request.file_paths
+        map_fn = request.map
+        reduce_fn = request.reduce
+        job_path = request.job_path
+        num_reducers = request.num_reducers
+        task_counter = 0
+        with STATE.job_lock:
+            job_id = STATE.job_counter
+            STATE.job_counter += 1
+            STATE.jobs[job_id] = {
+                "map_fn": map_fn,
+                "reduce_fn": reduce_fn,
+                "job_path": job_path,
+                "num_reducers": num_reducers,
+                "pending_maps": deque(),        # pending_maps/reduces -> deque of task dicts that are unscheduled
+                "pending_reduces": deque(),
+                "maps_left": 0,                 # reduces/maps_left -> count of map tasks unscheduled OR in-progress
+                "reduces_left": num_reducers,
+                "intermediate_output_dir" : f"output/temp/{job_id}/",
+                "stage": "map"
+            }
+            for fp in data_paths:
+                # Create a map task for each file
+                STATE.jobs[job_id]["pending_maps"].append({
+                        "data_paths": [fp],
+                        "task_id": task_counter,
+                })
+                task_counter += 1
+            STATE.jobs[job_id]["maps_left"] = task_counter
+            for i in range(num_reducers):
+                STATE.jobs[job_id]["pending_reduces"].append({
+                    "task_id": task_counter,
+                    "partition_id": i,
+                    "output_path": f"output/{job_id}/reduce_{i}.out"
+                })
+                task_counter += 1
+        return job_id
+# Background health monitor
+def health_monitor(check_count):
+    timeout_s = 15.0
+    active = set(STATE.list_active_workers(timeout_s))
+    all_workers = set(STATE.list_workers())
+    dead = all_workers - active
 
+    for key in dead:
+        LOG.warning("Removing inactive worker: %s", key)
+        STATE.remove(key)
 
-def make_master_server(bind):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
-    server.add_insecure_port(bind)
-    return server
+    # Report status periodically (every 12 checks = 1 minute)
+    if check_count % 12 == 0:
+        if active:
+            LOG.info("Health check: %d/%d workers active [%s]", 
+                    len(active), len(all_workers), "; ".join(sorted(active)))
+        elif all_workers:
+            LOG.warning("Health check: 0/%d workers active (all dead!)", len(all_workers))
 
+def schedule_loop(interval_seconds: float = 5.0):
+    """Schedules tasks and monitors worker health"""
+    check_count = 0
+    while True:
+        # Health check
+        health_monitor(check_count)
+        check_count += 1
+        task = None
+        with STATE.job_lock:
+            if not task:
+            # Try to find a pending task
+                for job_id in list(STATE.jobs.keys()):
+                    job_info = STATE.jobs[job_id]
+                    if job_info["pending_maps"]:
+                        task = job_info["pending_maps"].popleft()
+                        task["type"] = "map"
+                        task["job_id"] = job_id
+                        break
+                    elif job_info["stage"] == "map" and job_info["maps_left"] == 0:
+                        # Transition to reduce stage
+                        job_info["stage"] = "reduce"
+                    if job_info["stage"] == "reduce" and job_info["pending_reduces"]:
+                        task = job_info["pending_reduces"].popleft()
+                        task["type"] = "reduce"
+                        task["job_id"] = job_id
+                        break
+                    if job_info["stage"] == "reduce" and job_info["reduces_left"] == 0:
+                        LOG.info("Job %d completed", job_id)
+                        STATE.jobs.pop(job_id)
+        if not task:
+            # No pending tasks
+            time.sleep(interval_seconds)
+            continue
+        # Assign task to an idle worker
+        worker = STATE.assign_if_idle()
+        if not worker:
+            # No idle workers
+            time.sleep(interval_seconds)
+            continue
+        # Send task to worker
+        if (assign_task(worker, task)):
+            task = None # successfully assigned
+        time.sleep(interval_seconds)
 
-class _State:
-    """In-memory worker registry."""
-    def __init__(self):
-        self._lock = threading.Lock()
-        # key: worker_id -> {"active": bool, "last_heartbeat": float}
-        self._workers = {}
-
-    def upsert(self, worker_id: str):
-        """Register or update a worker by its ID."""
-        with self._lock:
-            now = time.time()
-            self._workers[worker_id] = {"active": True, "last_heartbeat": now}
-
-    def mark_heartbeat(self, key: str):
-        with self._lock:
-            if key in self._workers:
-                self._workers[key]["last_heartbeat"] = time.time()
-                self._workers[key]["active"] = True
-
-    def remove(self, key: str):
-        with self._lock:
-            self._workers.pop(key, None)
-
-    def list_workers(self):
-        with self._lock:
-            return list(self._workers.keys())
-
-    def list_active_workers(self, timeout_seconds: float = 15.0):
-        cutoff = time.time() - timeout_seconds
-        with self._lock:
-            return [k for k, v in self._workers.items() if v["last_heartbeat"] >= cutoff]
-
-
-STATE = _State()
+def assign_task(worker_id: str, task: dict):
+    STATE.assigned_tasks[worker_id] = task
+    try:
+        if not STATE._workers[worker_id]["channel"]:
+            STATE.create_channel(worker_id)
+        channel = STATE._workers[worker_id]["channel"]
+        stub = master_to_worker_pb2_grpc.WorkerTaskStub(channel)
+        if task["type"] == "map":
+            req = master_to_worker_pb2.MapTaskRequest(
+                job_id=task["job_id"],
+                job_path=STATE.jobs[task["job_id"]]["job_path"],
+                function_name=STATE.jobs[task["job_id"]]["map_fn"],
+                data_paths=task["data_paths"],
+                num_reducers=STATE.jobs[task["job_id"]]["num_reducers"],
+                output_dir=STATE.jobs[task["job_id"]]["intermediate_output_dir"],
+                task_id=task["task_id"],
+            )
+            fut = stub.RunMap.future(req)
+            fut.add_done_callback(lambda r: task_callback(r, worker_id, task))
+        elif task["type"] == "reduce":
+            req = master_to_worker_pb2.ReduceTaskRequest(
+                job_id=task["job_id"],
+                job_path=STATE.jobs[task["job_id"]]["job_path"],
+                function_name=STATE.jobs[task["job_id"]]["reduce_fn"],
+                partition_id=task["partition_id"],
+                output_path=task["output_path"],
+                task_id=task["task_id"],
+                input_dir=STATE.jobs[task["job_id"]]["intermediate_output_dir"]
+            )
+            fut = stub.RunReduce.future(req)
+            fut.add_done_callback(lambda r: task_callback(r, worker_id, task))
+    except Exception as e:
+        LOG.error("Failed to assign task to worker %s: %s", worker_id, e)
+        STATE.assigned_tasks.pop(worker_id, None)
+        STATE.mark_idle(worker_id)
+        return False
+    return True
+def task_callback(future, worker_id: str, task: dict):
+    try:
+        response = future.result()
+        if response.ok:
+            LOG.info("Task %d completed successfully on worker %s", task["task_id"], worker_id)
+            with STATE.job_lock:
+                job_info = STATE.jobs.get(task["job_id"], None)
+                if job_info:
+                    if task["type"] == "map":
+                        job_info["maps_left"] -= 1
+                    elif task["type"] == "reduce":
+                        job_info["reduces_left"] -= 1
+        else:
+            LOG.warning("Task %d failed on worker %s: %s", task["task_id"], worker_id, response.message)
+            STATE.retry_task(task)
+    except Exception as e:
+        LOG.error("Task %d callback failed for worker %s: %s", task["task_id"], worker_id, e)
+        STATE.retry_task(task)
+    finally:
+        STATE.assigned_tasks.pop(worker_id, None)
+        STATE.mark_idle(worker_id)
 
 
 def port_map(id: str):
@@ -177,65 +367,31 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
             LOG.warning("Heartbeat handling failed for %s: %s", request.worker_id, e)
             return worker_to_master_pb2.HeartbeatReply(ok=False, message=str(e))
 
-
-def make_registry_server(bind):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+def make_master_server(client_bind = '[::]:50051', worker_bind = '[::]:8081'):
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
     worker_to_master_pb2_grpc.add_RegistryServicer_to_server(RegistryServicer(), server)
-    server.add_insecure_port(bind)
+    server.add_insecure_port(client_bind)
+    server.add_insecure_port(worker_bind)
     return server
 
+def start_master():
+    master_srv = make_master_server('[::]:50051', '[::]:8081')
 
-def serve_both():
-    master_srv = make_master_server('[::]:50051')
-    registry_srv = make_registry_server('[::]:8081')
+    scheduler = threading.Thread(target=schedule_loop, daemon=True)
+    scheduler.start()
 
     master_srv.start()
-    registry_srv.start()
-
-    LOG.info("Starting master_client gRPC server on port 50051")
-    LOG.info("Starting registry server on port 8081")
-
-    # Background health monitor
-    def health_monitor():
-        timeout_s = 15.0
-        check_count = 0
-        while True:
-            active = set(STATE.list_active_workers(timeout_s))
-            all_workers = set(STATE.list_workers())
-            dead = all_workers - active
-            
-            # Report status periodically (every 12 checks = 1 minute)
-            check_count += 1
-            if check_count % 12 == 0:
-                if active:
-                    LOG.info("Health check: %d/%d workers active [%s]", 
-                            len(active), len(all_workers), "; ".join(sorted(active)))
-                elif all_workers:
-                    LOG.warning("Health check: 0/%d workers active (all dead!)", len(all_workers))
-            
-            for key in dead:
-                LOG.warning("Removing inactive worker: %s", key)
-                STATE.remove(key)
-            time.sleep(5)
-
-    hm_thread = threading.Thread(target=health_monitor, daemon=True)
-    hm_thread.start()
-
+    LOG.info("Starting master_client gRPC  on port 50051")
+    LOG.info("Starting registry gRPC on port 8081")
     # Wait on both; keep main thread alive
     try:
-        t1 = threading.Thread(target=master_srv.wait_for_termination, daemon=True)
-        t2 = threading.Thread(target=registry_srv.wait_for_termination, daemon=True)
-        t1.start()
-        t2.start()
-        LOG.info("Master node is ready")
-        while t1.is_alive() and t2.is_alive():
-            time.sleep(1)
+        master_srv.wait_for_termination()
     except KeyboardInterrupt:
         LOG.info("Shutting down gracefully...")
         master_srv.stop(grace=None)
-        registry_srv.stop(grace=None)
         LOG.info("Shutdown complete")
 
 
 if __name__ == '__main__':
-    serve_both()
+    start_master()
