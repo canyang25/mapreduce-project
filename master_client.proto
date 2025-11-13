@@ -5,6 +5,8 @@ package master_client;
 service MasterClient {
     // Get name and port of available datanode
     rpc MapReduce (MapReduceRequest) returns (MapReduceResponse) {}
+    //Get status of a job
+    rpc JobStatus(StatusRequest) returns (StatusResponse) {}
 }
 
 message MapReduceRequest {
@@ -16,7 +18,17 @@ message MapReduceRequest {
 }
 
 message MapReduceResponse {
-    bool success = 1;
-    repeated string file_paths = 2;
+    bool ok = 1;
+   // repeated string file_paths = 2;
     string message = 3;
+    int32 job_id = 4;
+}
+message StatusRequest {
+    int32 job_id = 1;
+}
+message StatusResponse {
+    bool done = 1;
+    repeated string file_paths = 2;
+    int32 pending_maps_tasks = 3;
+    int32 pending_reduce_tasks = 4;
 }

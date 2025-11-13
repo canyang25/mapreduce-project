@@ -70,7 +70,9 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 task_id=1
             )
             # For test, assign all map tasks to the first available worker
+            STATE._lock.acquire()
             workers = STATE.list_active_workers()
+            STATE._lock.release()
 
             if not workers:
                 raise RuntimeError("No active workers available")
@@ -82,22 +84,16 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                     raise RuntimeError("Map task failed. Message: " + map_resp.message)
 
             return master_client_pb2.MapReduceResponse(
-                success=True,
+                ok=True,
                 file_paths=[],
             )
         except Exception as e:
             LOG.error("MapReduce failed: %s", str(e))
             return master_client_pb2.MapReduceResponse(
-                success=False,
+                ok=False,
                 file_paths=[]
             )
 
-
-def make_master_server(bind):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
-    server.add_insecure_port(bind)
-    return server
 
 
 class _State:
@@ -106,6 +102,8 @@ class _State:
         self._lock = threading.Lock()
         # key: worker_id -> {"active": bool, "last_heartbeat": float}
         self._workers = {}
+        self._pending_requests = []
+        self._tasks_left = {} #
 
     def upsert(self, worker_id: str):
         """Register or update a worker by its ID."""
@@ -177,23 +175,16 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
             LOG.warning("Heartbeat handling failed for %s: %s", request.worker_id, e)
             return worker_to_master_pb2.HeartbeatReply(ok=False, message=str(e))
 
-
-def make_registry_server(bind):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+def make_master_server(client_bind = '[::]:50051', worker_bind = '[::]:8081'):
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
     worker_to_master_pb2_grpc.add_RegistryServicer_to_server(RegistryServicer(), server)
-    server.add_insecure_port(bind)
+    server.add_insecure_port(client_bind)
+    server.add_insecure_port(worker_bind)
     return server
 
-
 def serve_both():
-    master_srv = make_master_server('[::]:50051')
-    registry_srv = make_registry_server('[::]:8081')
-
-    master_srv.start()
-    registry_srv.start()
-
-    LOG.info("Starting master_client gRPC server on port 50051")
-    LOG.info("Starting registry server on port 8081")
+    master_srv = make_master_server('[::]:50051', '[::]:8081')
 
     # Background health monitor
     def health_monitor():
@@ -221,19 +212,15 @@ def serve_both():
     hm_thread = threading.Thread(target=health_monitor, daemon=True)
     hm_thread.start()
 
+    master_srv.start()
+    LOG.info("Starting master_client gRPC  on port 50051")
+    LOG.info("Starting registry gRPC on port 8081")
     # Wait on both; keep main thread alive
     try:
-        t1 = threading.Thread(target=master_srv.wait_for_termination, daemon=True)
-        t2 = threading.Thread(target=registry_srv.wait_for_termination, daemon=True)
-        t1.start()
-        t2.start()
-        LOG.info("Master node is ready")
-        while t1.is_alive() and t2.is_alive():
-            time.sleep(1)
+        master_srv.wait_for_termination()
     except KeyboardInterrupt:
         LOG.info("Shutting down gracefully...")
         master_srv.stop(grace=None)
-        registry_srv.stop(grace=None)
         LOG.info("Shutdown complete")
 
 
