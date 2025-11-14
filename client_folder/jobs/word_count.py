@@ -16,34 +16,39 @@ Usage:
     )
 """
 
-def map_function(text):
+from typing import List, Tuple
+
+def map_function(input_key: str, input_value: str) -> List[Tuple[str, int]]:
     """
-    Map phase: Tokenize text and emit (word, 1) pairs.
-    
+    Map phase: tokenize text and emit (word, 1) pairs.
+
     Args:
-        text: String containing the text content to process
-        
+        input_key: Identifier for the input record (e.g., file path).
+                  Not used in this job but included for a standardized interface.
+        input_value: Text content of the document as a string.
+
     Returns:
-        List of tuples: [(word, 1), (word, 1), ...]
+        List of (word, 1) tuples.
     """
-    # Split text into words (lowercase, remove punctuation)
     import re
-    words = re.findall(r'\b[a-z]+\b', text.lower())
-    
+
+    # Normalize to lowercase and extract words a–z
+    words = re.findall(r"\b[a-z]+\b", input_value.lower())
+
     # Emit (word, 1) for each word
     return [(word, 1) for word in words]
 
 
-def reduce_function(key, values):
+def reduce_function(key: str, values: List[int]) -> Tuple[str, int]:
     """
-    Reduce phase: Sum up the counts for each word.
-    
+    Reduce phase: sum up the counts for each word.
+
     Args:
-        key: The word (string)
-        values: List of counts for this word [1, 1, 1, ...]
-        
+        key: The word (string).
+        values: List of counts for this word [1, 1, 1, ...].
+
     Returns:
-        Tuple: (word, total_count)
+        (word, total_count) tuple.
     """
     total_count = sum(values)
-    return (key, total_count)
+    return key, total_count
