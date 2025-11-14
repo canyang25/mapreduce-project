@@ -67,7 +67,7 @@ class TestClient(unittest.TestCase):
         response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2)
 
         # Check success message
-        self.assertTrue(response.success)
+        self.assertTrue(response.ok)
 
         # Check correctness of output files by simulating job locally
         local_results = self.run_job_locally(local_job_script, file_paths)
@@ -131,7 +131,8 @@ class TestClient(unittest.TestCase):
             responses.append(response)
 
         # Check success message
-        self.assertTrue(response.success)
+        for each_response in responses:
+            self.assertTrue(each_response.ok)
 
         # Check correctness of output files by simulating job locally
         local_results = self.run_job_locally(local_job_script, file_paths)
