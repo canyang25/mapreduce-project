@@ -50,4 +50,4 @@ RUN printf '%s\n' \
 'exec python3 -u /app/client.py "$@"' > /usr/local/bin/start-client.sh \
  && chmod +x /usr/local/bin/start-client.sh
 
-CMD export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)" && exec python3 -u /app/client.py "$@"
+CMD sleep 10 && export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)" && exec python3 -u /app/client.py "$@"
