@@ -41,10 +41,10 @@ class Client:
             
             response = self.stub.MapReduce(request)
 
-            if response.success:
+            if response.ok:
                 return response
             else:
-                raise Exception(f"Failed to read file via worker: {response.error_message}")
+                raise Exception(f"Failed to read file via worker")
         except grpc.RpcError as e:
             raise Exception(f"gRPC error: {str(e)}")
     

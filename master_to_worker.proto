@@ -18,9 +18,11 @@ message ReduceTaskRequest {
 	int32 job_id = 1;
 	string job_path = 2;
 	string function_name = 3;
-	repeated string partition_paths = 4;
+	int32 partition_id = 4;
     string output_path = 5;
 	int32 task_id = 6;
+	string input_dir = 7;
+
 }
 
 // Standard acknowledgement returned by workers after running a task.
