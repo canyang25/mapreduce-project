@@ -1,22 +1,35 @@
 FROM hdfs
 
-# Install Python gRPC runtime
-RUN pip3 install --break-system-packages grpcio grpcio-tools
+# --- Install Python gRPC + PyArrow runtime ---
+RUN pip install --no-cache-dir --break-system-packages pyarrow grpcio grpcio-tools pandas
 
-# Create app directory
+# --- Create app directory ---
 WORKDIR /app
 
-# Copy proto file and generate gRPC code
+# --- Set Hadoop + Java paths ---
+ENV HADOOP_HOME=/hadoop-3.3.6
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV PATH=$HADOOP_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=$HADOOP_HOME/lib/native:$LD_LIBRARY_PATH
+
+RUN printf '%s\n' \
+  'export HADOOP_HOME=/hadoop-3.3.6' \
+  'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64' \
+  'export PATH=$HADOOP_HOME/bin:$PATH' \
+  'export LD_LIBRARY_PATH=$HADOOP_HOME/lib/native:$LD_LIBRARY_PATH' \
+  'export CLASSPATH="$($HADOOP_HOME/bin/hadoop classpath --glob)"' \
+  > /etc/profile.d/hadoop.sh
+
+# --- Copy and generate gRPC code ---
 COPY worker_to_master.proto .
 COPY master_to_worker.proto .
 RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_to_worker.proto
 RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. worker_to_master.proto
 
-# Copy worker registration script
+# --- Copy worker script + entrypoint ---
 COPY worker.py .
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Start registration helper in background, then start datanode. The worker will retry registration
-# until it succeeds; running it alongside HDFS keeps the container lifecycle tied together.
-CMD export CLASSPATH=`$HADOOP_HOME/bin/hdfs classpath --glob` && \
-    hdfs datanode -D dfs.datanode.data.dir=/var/datanode -fs hdfs://boss:9000 & \
-    python3 -u /app/worker.py
+# --- Run the entrypoint (builds CLASSPATH dynamically then launches) ---
+CMD ["/entrypoint.sh"]
