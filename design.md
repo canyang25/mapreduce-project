@@ -1,7 +1,7 @@
 # Honors MapReduce Implementation
 
 ## Overview
-This project implements a distributed MapReduce system using Docker Compose with fault tolerance features. This is a living document which we will add to throughout development - right now it's very preliminary, mostly detailing the rough structure of this project including some basic design decisions.
+This project implements a distributed MapReduce system using Docker Compose with fault tolerance features
 
 ## Team Members
 - Canyang Zhao
@@ -20,19 +20,16 @@ This project implements a distributed MapReduce system using Docker Compose with
 
 ### Project Structure
 ```
-├── scripts/          # .py implementations
-├── test/             # Test suites
-├── deploy/           # Docker Compose configuration
-│   └── docker-compose.yml
+├── client_folder/      # Get's copied over into the client container 
+│   ├── data/           # Data that can be used
+│   ├── jobs/           # Map Reduce Jobs
+│   └── scripts/       
 ├── proto/            # Protocol buffer definitions
 └── examples/         # Example data and jobs
 ```
 
 ## Required Software
 - Docker and Docker Compose
-- Python 3.8+
-- Protocol Buffer compiler (protoc)
-- HDFS (Hadoop Distributed File System)
 
 ## Usage
 
@@ -42,16 +39,34 @@ Submit a Job
 Monitor Job Progress and view results
 
 ## Example Data
-We plan to include different size levels of data partitioned into separate directories. Small data help us with development and verifying basic functionality, large data gives us performance metrics and lets us test functionality at scale
+We include different size levels of data partitioned into separate directories. Small data help us with development and verifying basic functionality, large data gives us performance metrics and lets us test functionality at scale
 
-## Building system
-[Further instructions for building the system and installing specific packages]
-
+## Example usage
+- Upload any data you want to do a MapReduce job to client_folder/data
+- Upload any MapReduce job to client_folder/jobs. It should follow standard MapReduce format: 
+    - map (k1, v1) -> list(k2, v2)
+    - reduce (k2, list(v2)) -> list(v2)
+- Build the system
+```bash
+docker compose build
+docker compose up -d
+```
+- Upload all data in client_folder/data to hdfs by running upload_data.py
+```bash
+docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py
+```
+- Run MapReduce job
+```bash
+docker compose exec client python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/<job file name> \
+    --files /client_folder/data/<file 1> \
+            /client_folder/data/<file 2> \
+            ...
+    --reducers <number of reducers>
+```
 ### Test Categories
-1. **Unit Tests**: Individual component testing
-2. **Integration Tests**: End-to-end workflow testing
-3. **Performance Tests**: Scaling and throughput evaluation
-4. **Fault Tolerance Tests**: Worker failure scenarios
+1. **Health Tests**: Tests worker health checking (test_health_check.sh)
+2. **Client-end Tests**: Tests end-to-end functionality by querying the system through different senarios 
 
 ## Special Features
 ### Worker Health Monitoring
@@ -62,5 +77,10 @@ We plan to include different size levels of data partitioned into separate direc
 
 **Testing:**
 ```bash
-./test_health_check.sh  # Runs test suite
+./test_health_check.sh  # Runs health-related test suite
+```
+After creating the containers
+```bash
+docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py     # Uploads test data
+docker exec mapreduce-project-client-1 python3 client_folder/scripts/test.py            # Runs client-side tests
 ```
