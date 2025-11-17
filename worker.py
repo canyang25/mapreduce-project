@@ -7,6 +7,9 @@ import logging
 import grpc
 import threading
 from concurrent import futures
+import importlib.util
+import pyarrow as pa
+from pyarrow import fs
 
 import worker_to_master_pb2
 import worker_to_master_pb2_grpc
@@ -20,6 +23,36 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 TASK_SERVER_PORT = 50051
 WORKER_ID = socket.gethostname()
 
+def get_hdfs():
+    return fs.HadoopFileSystem("boss", 9000)
+
+def ensure_parent_dir(fs, path: str) -> None:
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    if parent:
+        try:
+            fs.mkdir(parent)
+        except Exception:
+            pass
+
+def load_user_function(job_path, function_name):
+    fs = get_hdfs()
+    with fs.open(job_path, "rb") as f:
+        code = f.read().decode("utf-8")
+    spec = importlib.util.spec_from_loader("user_job", loader=None)
+    module = importlib.util.module_from_spec(spec)
+    exec(code, module.__dict__)
+    fn = getattr(module, function_name, None)
+    if fn is None:
+        raise AttributeError(f"{function_name} not found in {job_path}")
+    return fn
+
+def write_lines(fs, path, lines):
+    ensure_parent_dir(fs, path)
+    with fs.open(path, "wb") as out:
+        for line in lines:
+            if not line.endswith("\n"):
+                line = line + "\n"
+            out.write(line.encode("utf-8"))
 
 def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_delay=1.0):
     """Register this worker with the registry service. Retries with exponential backoff.
@@ -27,12 +60,9 @@ def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_de
     Raises RuntimeError on unrecoverable failure.
     """
     container_id = socket.gethostname()
-
     LOG.info("Registering worker: id=%s", container_id)
+    attempt, delay, last_exc = 0, initial_delay, None
 
-    attempt = 0
-    delay = initial_delay
-    last_exc = None
     while attempt < max_attempts:
         attempt += 1
         try:
@@ -46,11 +76,8 @@ def register_with_retry(namenode_host, namenode_port, max_attempts=8, initial_de
         except Exception as e:
             last_exc = e
             LOG.warning("Registration attempt %d failed: %s", attempt, e)
-            if attempt >= max_attempts:
-                break
             time.sleep(delay)
             delay = min(delay * 2, 30)
-
     raise RuntimeError(f"Failed to register worker after {max_attempts} attempts") from last_exc
 
 
@@ -86,20 +113,69 @@ def heartbeat_loop(namenode_host: str, namenode_port: int, worker_id: str, inter
 
 class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
     def RunMap(self, request, context):
-        LOG.info(f"Worker : {WORKER_ID} running map task {request.task_id}")
-        # TODO: run mapper script
-        return master_to_worker_pb2.Ack(ok=True, message="map done")
+        LOG.info(f"[map] worker={WORKER_ID} task_id={request.task_id}")
+        try:
+            fs = get_hdfs()
+            map_fn = load_user_function(request.job_path, request.function_name)
+            partitions = [[] for _ in range(request.num_reducers)]
+
+            for data_path in request.data_paths:
+                with fs.open(data_path, "rb") as f:
+                    for line in f.read().decode("utf-8").splitlines():
+                        for k, v in map_fn(line):
+                            rid = (hash(k) % request.num_reducers)
+                            partitions[rid].append(f"{k}\t{v}")
+
+            for rid, lines in enumerate(partitions):
+                out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.txt"
+                write_lines(fs, out_path, lines)
+                LOG.debug(f"[map] wrote partition rid={rid} -> {out_path}")
+            LOG.info(f"[map] task {request.task_id} complete")
+            return master_to_worker_pb2.Ack(ok=True, message="map done")
+        except Exception as e:
+            LOG.error(f"[map] task {request.task_id} failed: {e}", exc_info=True)
+            return master_to_worker_pb2.Ack(ok=False, message=str(e))
 
     def RunReduce(self, request, context):
-        LOG.info(f"Worker : {WORKER_ID} running reduce task {request.task_id}")
-        # TODO: run reducer script
-        return master_to_worker_pb2.Ack(ok=True, message="reduce done")
-    
+        LOG.info(f"[reduce] worker={WORKER_ID} task_id={request.task_id}")
+        try:
+            fs = get_hdfs()
+            reduce_fn = load_user_function(request.job_path, request.function_name)
+            infos = fs.get_file_info(fs.get_file_info_selector(request.input_dir, recursive=False))
+            files = [info.path for info in infos if info.path.endswith(f"_{request.partition_id}.txt")]
+
+            groups, total_in = {}, 0
+            for path in files:
+                with fs.open(path, "rb") as f:
+                    for line in f.read().decode("utf-8").splitlines():
+                        if not line:
+                            continue
+                        try:
+                            k, v = line.split("\t", 1)
+                            groups.setdefault(k, []).append(v)
+                            total_in += 1
+                        except ValueError:
+                            LOG.warning(f"Malformed line in {path}: {line!r}")
+
+            out_lines = []
+            for k, vs in groups.items():
+                for out in reduce_fn(k, vs):
+                    if isinstance(out, tuple) and len(out) == 2:
+                        ok, ov = out
+                        out_lines.append(f"{ok}\t{ov}")
+                    else:
+                        out_lines.append(str(out))
+
+            write_lines(fs, request.output_path, out_lines)
+            LOG.info(f"[reduce] complete (in={total_in}, out={len(out_lines)})")
+            return master_to_worker_pb2.Ack(ok=True, message="reduce done")
+        except Exception as e:
+            LOG.error(f"[reduce] failed: {e}", exc_info=True)
+            return master_to_worker_pb2.Ack(ok=False, message=str(e))
+
 def start_task_server():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    master_to_worker_pb2_grpc.add_WorkerTaskServicer_to_server(
-        WorkerTaskServicer(), server
-    )
+    master_to_worker_pb2_grpc.add_WorkerTaskServicer_to_server(WorkerTaskServicer(), server)
     server.add_insecure_port(f"[::]:{TASK_SERVER_PORT}")
     server.start()
     LOG.info(f"Worker task server listening on {TASK_SERVER_PORT}")
@@ -120,4 +196,3 @@ if __name__ == "__main__":
     except Exception as e:
         LOG.error("Worker registration failed: %s", e)
         raise
-
