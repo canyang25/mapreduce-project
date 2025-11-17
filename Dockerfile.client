@@ -37,11 +37,8 @@ RUN pip3 install --break-system-packages \
 COPY master_client.proto .
 RUN python3 -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. master_client.proto
 
-# Copy the client code
-COPY client.py .
-
-# Copy examples directory (for upload script and test data)
-COPY examples/ ./examples/
+# Copy client_folder directory (includes scripts and test data)
+COPY client_folder/ ./client_folder/
 
 # Start wrapper: sets CLASSPATH for libhdfs every run
 RUN printf '%s\n' \
@@ -50,4 +47,4 @@ RUN printf '%s\n' \
 'exec python3 -u /app/client.py "$@"' > /usr/local/bin/start-client.sh \
  && chmod +x /usr/local/bin/start-client.sh
 
-CMD sleep 10 && export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)" && exec python3 -u /app/client.py "$@"
+CMD export CLASSPATH="$($HADOOP_HOME/bin/hdfs classpath --glob)" && sleep infinity
