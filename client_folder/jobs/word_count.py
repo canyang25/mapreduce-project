@@ -3,29 +3,18 @@ Word Count MapReduce Job Template
 
 This file demonstrates a classic MapReduce example: counting word occurrences
 across multiple text files.
-
-Usage:
-    # In your client code:
-    from client_folder.jobs.word_count import map_function, reduce_function
-    
-    client = Client(...)
-    result = client.map_reduce(
-        file_paths=["/client_folder/data/small/file1.txt", "/client_folder/data/small/file2.txt"],
-        map=map_function,
-        reduce=reduce_function
-    )
 """
 
 from typing import List, Tuple
 
 def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
     """
-    Iterator function to split file bytes into (key, value) pairs.
+    Iterator function to split file bytes into (key, value) pairs to pass to map_function.
     Here, key is the file path and value is the file content as a string.
 
     Args:
         file_bytes: The raw bytes of the input file.
-        metadata: Dictionary containing metadata such as 'file_path'.
+        metadata: Dictionary containing metadata such as 'file_path' and 'file_size'.
     """
     content = file_bytes.decode("utf-8")
     doc_id = metadata.get("file_path", "unknown_document")

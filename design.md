@@ -24,8 +24,9 @@ This project implements a distributed MapReduce system using Docker Compose with
 │   ├── data/           # Data that can be used
 │   ├── jobs/           # Map Reduce Jobs
 │   └── scripts/       
-├── proto/            # Protocol buffer definitions
-└── examples/         # Example data and jobs
+├── docker-compose.yml  # Docker compose file - orchestrate all required containers
+├── master.py           # All the code for the master node for the MapReduce implementation
+└── worker.py           # All the code for the worker nodes for the MapReduce implementation
 ```
 
 ## Required Software
@@ -33,15 +34,19 @@ This project implements a distributed MapReduce system using Docker Compose with
 
 ## Usage
 
-Upload Example Data
-Write a MapReduce Job
-Submit a Job
-Monitor Job Progress and view results
+
 
 ## Example Data
 We include different size levels of data partitioned into separate directories. Small data help us with development and verifying basic functionality, large data gives us performance metrics and lets us test functionality at scale
 
 ## Example usage
+High level:
+- Upload Example Data
+- Write a MapReduce Job
+- Submit a Job
+- Monitor Job Progress and view results
+
+Specific:
 - Upload any data you want to do a MapReduce job to client_folder/data
 - Upload any MapReduce job to client_folder/jobs. It should follow standard MapReduce format: 
     - map (k1, v1) -> list(k2, v2)
@@ -66,7 +71,7 @@ docker compose exec client python3 -m client_folder.scripts.interactive_client \
 ```
 ### Test Categories
 1. **Health Tests**: Tests worker health checking (test_health_check.sh)
-2. **Client-end Tests**: Tests end-to-end functionality by querying the system through different senarios 
+2. **Client-end Tests**: Tests end-to-end functionality by querying the system through different senarios
 
 ## Special Features
 ### Worker Health Monitoring

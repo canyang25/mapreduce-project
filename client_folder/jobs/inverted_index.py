@@ -1,9 +1,7 @@
 """
-Inverted Index MapReduce Job (Standardized Format)
+Inverted Index MapReduce Job
 
-Interface:
-    map_function(input_key, input_value) -> list[(word, doc_id)]
-    reduce_function(word, [doc_ids]) -> (word, sorted_unique_doc_ids)
+This file demonstrates a classic MapReduce example: inverting word indexes.
 
 This job builds an inverted index:
     word -> list of documents where the word appears
@@ -13,11 +11,12 @@ from typing import List, Tuple
 
 def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
     """
-    Iterator function to read the entire file content as a single value.
+    Iterator function to split file bytes into (key, value) pairs to pass to map_function.
+    Here, key is the file path and value is the file content as a string.
 
     Args:
         file_bytes: The raw bytes of the file.
-        metadata: Metadata dictionary (not used here).
+        metadata: Dictionary containing metadata such as 'file_path' and 'file_size'.
     """
     content = file_bytes.decode("utf-8")
     doc_id = metadata.get("file_path", "unknown_document")

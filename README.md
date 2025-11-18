@@ -12,6 +12,7 @@ A distributed MapReduce implementation with:
 
 ### 1. Build and Start
 ```bash
+docker compose build
 docker compose up -d
 ```
 
@@ -29,7 +30,12 @@ docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interact
     --reducers 2
 ```
 
-### 4. Stop
+### 4. Run client-side tests
+```bash
+docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.test.py
+```
+
+### 5. Stop
 ```bash
 docker compose down
 ```

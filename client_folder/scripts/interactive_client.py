@@ -15,11 +15,12 @@ The job file is:
 
 Example usage (inside client container):
 
-    python -m client_folder.scripts.interactive_client \
-        --job /app/client_folder/jobs/inverted_index.py \
-        --files /client_folder/data/small/file1.txt \
-                /client_folder/data/small/file2.txt \
-        --reducers 2
+    docker compose exec client python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/<job file name> \
+    --files /client_folder/data/<file 1> \
+            /client_folder/data/<file 2> \
+            ...
+    --reducers <number of reducers>
 """
 from .client import Client
 
