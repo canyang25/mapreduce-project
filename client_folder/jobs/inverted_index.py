@@ -19,9 +19,9 @@ def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
         file_bytes: The raw bytes of the file.
         metadata: Metadata dictionary (not used here).
     """
-    content = file_bytes
+    content = file_bytes.decode("utf-8")
     doc_id = metadata.get("file_path", "unknown_document")
-    yield (doc_id, str(content))
+    yield (doc_id, content)
 
 def map_function(input_key: str, input_value: str) -> List[Tuple[str, str]]:
     """
