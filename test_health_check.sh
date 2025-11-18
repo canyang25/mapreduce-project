@@ -221,6 +221,45 @@ fi
 rm -f /tmp/test9_job_output.log
 
 echo ""
+echo "Test 10: Channel fix - job after worker restart"
+echo "Starting fresh with 2 workers..."
+$COMPOSE up -d --scale dn=2
+sleep 6
+
+echo "Running job 1..."
+docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file1.txt \
+    --reducers 2 >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "Job 1 completed"
+else
+    echo "Job 1 failed"
+fi
+
+echo "Killing worker 1..."
+docker stop mapreduce-project-dn-1 >/dev/null 2>&1
+sleep 3
+
+echo "Restarting worker 1..."
+docker start mapreduce-project-dn-1 >/dev/null 2>&1
+sleep 6
+
+echo "Running job 2 (tests channel fix)..."
+docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file2.txt \
+    --reducers 2 >/dev/null 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "Job 2 completed - channel fix works!"
+    echo "Stale channel bug is fixed"
+else
+    echo "FAILED - Job 2 crashed with networking error"
+    echo "Channel bug still exists"
+fi
+
+echo ""
 echo "Summary:"
 echo ""
 
