@@ -115,16 +115,16 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
     def RunMap(self, request, context):
         LOG.info(f"[map] worker={WORKER_ID} task_id={request.task_id}")
         try:
-            fs = get_hdfs()
-            map_fn = load_user_function(request.job_path, request.function_name)
+            #fs = get_hdfs()
+            #map_fn = load_user_function(request.job_path, request.function_name)
             partitions = [[] for _ in range(request.num_reducers)]
 
-            for data_path in request.data_paths:
-                with fs.open(data_path, "rb") as f:
-                    for line in f.read().decode("utf-8").splitlines():
-                        for k, v in map_fn(line):
-                            rid = (hash(k) % request.num_reducers)
-                            partitions[rid].append(f"{k}\t{v}")
+            # for data_path in request.data_paths:
+            #     with fs.open(data_path, "rb") as f:
+            #         for line in f.read().decode("utf-8").splitlines():
+            #             for k, v in map_fn(line):
+            #                 rid = (hash(k) % request.num_reducers)
+            #                 partitions[rid].append(f"{k}\t{v}")
 
             for rid, lines in enumerate(partitions):
                 out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.txt"
@@ -139,32 +139,32 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
     def RunReduce(self, request, context):
         LOG.info(f"[reduce] worker={WORKER_ID} task_id={request.task_id}")
         try:
-            fs = get_hdfs()
-            reduce_fn = load_user_function(request.job_path, request.function_name)
-            infos = fs.get_file_info(fs.get_file_info_selector(request.input_dir, recursive=False))
-            files = [info.path for info in infos if info.path.endswith(f"_{request.partition_id}.txt")]
+            # fs = get_hdfs()
+            # reduce_fn = load_user_function(request.job_path, request.function_name)
+            # infos = fs.get_file_info(fs.get_file_info_selector(request.input_dir, recursive=False))
+            # files = [info.path for info in infos if info.path.endswith(f"_{request.partition_id}.txt")]
 
-            groups, total_in = {}, 0
-            for path in files:
-                with fs.open(path, "rb") as f:
-                    for line in f.read().decode("utf-8").splitlines():
-                        if not line:
-                            continue
-                        try:
-                            k, v = line.split("\t", 1)
-                            groups.setdefault(k, []).append(v)
-                            total_in += 1
-                        except ValueError:
-                            LOG.warning(f"Malformed line in {path}: {line!r}")
+            # groups, total_in = {}, 0
+            # for path in files:
+            #     with fs.open(path, "rb") as f:
+            #         for line in f.read().decode("utf-8").splitlines():
+            #             if not line:
+            #                 continue
+            #             try:
+            #                 k, v = line.split("\t", 1)
+            #                 groups.setdefault(k, []).append(v)
+            #                 total_in += 1
+            #             except ValueError:
+            #                 LOG.warning(f"Malformed line in {path}: {line!r}")
 
-            out_lines = []
-            for k, vs in groups.items():
-                for out in reduce_fn(k, vs):
-                    if isinstance(out, tuple) and len(out) == 2:
-                        ok, ov = out
-                        out_lines.append(f"{ok}\t{ov}")
-                    else:
-                        out_lines.append(str(out))
+            # out_lines = []
+            # for k, vs in groups.items():
+            #     for out in reduce_fn(k, vs):
+            #         if isinstance(out, tuple) and len(out) == 2:
+            #             ok, ov = out
+            #             out_lines.append(f"{ok}\t{ov}")
+            #         else:
+            #             out_lines.append(str(out))
 
             write_lines(fs, request.output_path, out_lines)
             LOG.info(f"[reduce] complete (in={total_in}, out={len(out_lines)})")
