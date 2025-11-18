@@ -10,6 +10,7 @@ from concurrent import futures
 import importlib.util
 import pyarrow as pa
 from pyarrow import fs
+from pyarrow.fs import FileSelector, FileType
 
 import worker_to_master_pb2
 import worker_to_master_pb2_grpc
@@ -117,26 +118,14 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
         try:
             fs = get_hdfs()
             map_fn = load_user_function(request.job_path, request.function_name)
-            iterator_fn = load_user_function(request.job_path, request.iterator_fn) if request.iterator_fn else None
             partitions = [[] for _ in range(request.num_reducers)]
 
             for data_path in request.data_paths:
                 with fs.open_input_stream(data_path) as f:
-                    if iterator_fn:
-                        file_bytes = f.readall()
-                        metadata = {"size" : len(file_bytes), "file_path": data_path}
-                        for key, val in iterator_fn(file_bytes, metadata):
-                            for k, v in map_fn(key, val):
-                                rid = (hash(k) % request.num_reducers)
-                                partitions[rid].append(f"{k}\t{v}")
-
-                    else :
-                        for line in f.read().decode("utf-8").splitlines():
-                            count = 0
-                            for k, v in map_fn(count, line):
-                                rid = (hash(k) % request.num_reducers)
-                                partitions[rid].append(f"{k}\t{v}")
-                                count+=1
+                    for line in f.read().decode("utf-8").splitlines():
+                        for k, v in map_fn(line):
+                            rid = (hash(k) % request.num_reducers)
+                            partitions[rid].append(f"{k}\t{v}")
 
             for rid, lines in enumerate(partitions):
                 out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.txt"
@@ -153,8 +142,14 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
         try:
             fs = get_hdfs()
             reduce_fn = load_user_function(request.job_path, request.function_name)
-            infos = fs.get_file_info(fs.get_file_info_selector(request.input_dir, recursive=False))
-            files = [info.path for info in infos if info.path.endswith(f"_{request.partition_id}.txt")]
+            selector = FileSelector(request.input_dir, recursive=False)
+            infos = fs.get_file_info(selector)
+
+            files = [
+                info.path
+                for info in infos
+                if info.type == FileType.File and info.path.endswith(f"_{request.partition_id}.txt")
+            ]
 
             groups, total_in = {}, 0
             for path in files:
