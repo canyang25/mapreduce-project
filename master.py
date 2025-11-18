@@ -327,10 +327,10 @@ def task_callback(future, worker_id: str, task: dict):
                         STATE.job_done.notify_all()
 
         else:
-            LOG.warning("Task %d failed on worker %s: %s", task["task_id"], worker_id, response.message)
+            LOG.warning("Task %d failed on worker %s: %s. Retrying...", task["task_id"], worker_id, response.message)
             STATE.retry_task(task)
     except Exception as e:
-        LOG.error("Task %d callback failed for worker %s: %s", task["task_id"], worker_id, e)
+        LOG.error("Task %d callback failed for worker %s: %s. Retrying task...", task["task_id"], worker_id, e)
         STATE.retry_task(task)
     finally:
         STATE.assigned_tasks.pop(worker_id, None)
