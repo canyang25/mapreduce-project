@@ -12,6 +12,12 @@ else
   exit 1
 fi
 
+# Get dynamic container names based on compose project
+PROJECT_NAME=$($COMPOSE ps --format json 2>/dev/null | head -1 | grep -o '"Project":"[^"]*"' | cut -d'"' -f4)
+if [ -z "$PROJECT_NAME" ]; then
+  PROJECT_NAME="mapreduce-project"
+fi
+
 echo "Starting health check tests..."
 echo ""
 
@@ -54,7 +60,7 @@ sleep 8
 
 echo "Jitter values:"
 for i in 1 2 3; do
-    container="mapreduce-project-dn-$i"
+    container="${PROJECT_NAME}-dn-$i"
     jitter=$(docker logs $container 2>&1 | grep "Starting heartbeat loop" | tail -1)
     if [ -n "$jitter" ]; then
         echo "  $jitter"
@@ -82,7 +88,7 @@ fi
 echo ""
 echo "Test 4: Failure detection"
 echo "Stopping worker 2..."
-docker stop mapreduce-project-dn-2 >/dev/null 2>&1
+docker stop ${PROJECT_NAME}-dn-2 >/dev/null 2>&1
 stopped_time=$(date '+%H:%M:%S')
 echo "Stopped at: $stopped_time"
 
@@ -127,11 +133,11 @@ fi
 echo ""
 echo "Test 8: Worker failure during job"
 echo "Uploading data..."
-docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data already exists)"
+docker exec ${PROJECT_NAME}-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data already exists)"
 sleep 2
 
 echo "Starting word count job..."
-docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/word_count.py \
     --files /client_folder/data/small/file1.txt /client_folder/data/small/file2.txt \
     --reducers 2 > /tmp/test8_job_output.log 2>&1 &
@@ -143,7 +149,7 @@ echo "Waiting for map to start..."
 sleep 3
 
 echo "Killing worker 1..."
-docker stop mapreduce-project-dn-1 >/dev/null 2>&1
+docker stop ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
 
 echo "Waiting for job to finish (max 30s)..."
 job_timeout=30
@@ -177,11 +183,11 @@ $COMPOSE up -d --scale dn=2
 sleep 6
 
 echo "Uploading data (if needed)..."
-docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data exists)"
+docker exec ${PROJECT_NAME}-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data exists)"
 sleep 1
 
 echo "Starting word count job..."
-docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/word_count.py \
     --files /client_folder/data/small/file1.txt /client_folder/data/small/file2.txt /client_folder/data/small/file3.txt \
     --reducers 2 > /tmp/test9_job_output.log 2>&1 &
@@ -193,7 +199,7 @@ echo "Waiting 6 seconds for reduce phase to start..."
 sleep 6
 
 echo "Killing worker during reduce..."
-docker stop mapreduce-project-dn-2 >/dev/null 2>&1
+docker stop ${PROJECT_NAME}-dn-2 >/dev/null 2>&1
 
 echo "Waiting for job to finish (max 30s)..."
 job_timeout=30
@@ -227,7 +233,7 @@ $COMPOSE up -d --scale dn=2
 sleep 6
 
 echo "Running job 1..."
-docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/word_count.py \
     --files /client_folder/data/small/file1.txt \
     --reducers 2 >/dev/null 2>&1
@@ -238,15 +244,15 @@ else
 fi
 
 echo "Killing worker 1..."
-docker stop mapreduce-project-dn-1 >/dev/null 2>&1
+docker stop ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
 sleep 3
 
 echo "Restarting worker 1..."
-docker start mapreduce-project-dn-1 >/dev/null 2>&1
+docker start ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
 sleep 6
 
 echo "Running job 2 (tests channel fix)..."
-docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interactive_client \
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/word_count.py \
     --files /client_folder/data/small/file2.txt \
     --reducers 2 >/dev/null 2>&1
