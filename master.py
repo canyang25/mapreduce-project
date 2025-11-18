@@ -190,7 +190,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 "pending_reduces": deque(),
                 "maps_left": 0,                 # reduces/maps_left -> count of map tasks unscheduled OR in-progress
                 "reduces_left": num_reducers,
-                "intermediate_output_dir" : f"output/temp/{job_id}/",
+                "intermediate_output_dir" : f"output/job_{job_id}/temp/",
                 "stage": "map"
             }
             for fp in data_paths:
@@ -206,7 +206,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 STATE.jobs[job_id]["pending_reduces"].append({
                     "task_id": task_counter,
                     "partition_id": i,
-                    "output_path": f"output/{job_id}/reduce_{i}.out"
+                    "output_path": f"output/job_{job_id}/reduce_{i}.txt"
                 })
                 task_counter += 1
         return job_id

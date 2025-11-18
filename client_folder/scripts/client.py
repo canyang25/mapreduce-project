@@ -44,7 +44,7 @@ class Client:
             if response.ok:
                 return response
             else:
-                raise Exception(f"Failed to read file via worker")
+                raise Exception(f"Failed map reduce task: {response.error_message}")
         except grpc.RpcError as e:
             raise Exception(f"gRPC error: {str(e)}")
     
