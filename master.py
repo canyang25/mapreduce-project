@@ -158,7 +158,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
             with STATE.job_lock:
                 while STATE.jobs[job_id]["maps_left"] > 0 or STATE.jobs[job_id]["reduces_left"] > 0:
                     STATE.job_done.wait()
-            file_paths = [f"output/{job_id}/reduce_{i}.out" for i in range(request.num_reducers)]
+            file_paths = [f"output/job_{job_id}/reduce_{i}.out" for i in range(request.num_reducers)]
             return master_client_pb2.MapReduceResponse(
                 ok=True,
                 message="Job scheduled",
