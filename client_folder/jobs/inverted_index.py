@@ -11,7 +11,17 @@ This job builds an inverted index:
 
 from typing import List, Tuple
 
+def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
+    """
+    Iterator function to read the entire file content as a single value.
 
+    Args:
+        file_bytes: The raw bytes of the file.
+        metadata: Metadata dictionary (not used here).
+    """
+    content = file_bytes
+    doc_id = metadata.get("file_path", "unknown_document")
+    yield (doc_id, content)
 def map_function(input_key: str, input_value: str) -> List[Tuple[str, str]]:
     """
     Map phase: Extract all unique words from the document and emit
