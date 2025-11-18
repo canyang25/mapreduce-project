@@ -221,6 +221,74 @@ class TestClient(unittest.TestCase):
 
             # 3) Compare local vs remote for that call
             self.assertEqual(remote_dict, local_dict)
+    
+    def test_invalid_num_reducers_zero(self):
+        """Test that num_reducers=0 is handled gracefully."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/client_folder/data/small/file1.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit with num_reducers=0 - should fail
+        response = self.client.map_reduce(
+            file_paths, 
+            'map_function', 
+            'reduce_function', 
+            uploaded_job_script, 
+            0  # Invalid
+        )
+        
+        # Should either reject or return error
+        # Depending on implementation, check for failure
+        # If system doesn't validate yet, this will expose that
+        self.assertFalse(response.ok, "System should reject num_reducers=0")
+    
+    def test_nonexistent_file(self):
+        """Test behavior when input file doesn't exist in HDFS."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/nonexistent/fake_file.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit job with non-existent file
+        response = self.client.map_reduce(
+            file_paths,
+            'map_function',
+            'reduce_function',
+            uploaded_job_script,
+            2
+        )
+        
+        # Should fail gracefully
+        self.assertFalse(response.ok, "System should handle non-existent file gracefully")
+    
+    def test_incorrect_function_name(self):
+        """Test that incorrect function names are handled."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/client_folder/data/small/file1.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit with wrong function name
+        response = self.client.map_reduce(
+            file_paths,
+            'map_function_typo',  # Incorrect name
+            'reduce_function',
+            uploaded_job_script,
+            2
+        )
+        
+        # Should fail with clear error
+        self.assertFalse(response.ok, "System should reject incorrect function names")
 
 
 
