@@ -6,6 +6,7 @@ import unittest
 import time
 import importlib.util
 import sys
+import ast
 
 def load_function_from_path(path, func_name):
     # Create module spec
@@ -29,6 +30,7 @@ class TestClient(unittest.TestCase):
         )
         # Give time for HDFS to be ready
         time.sleep(5)
+        self.maxDiff = None
     
     # Helper functions
 
@@ -57,6 +59,41 @@ class TestClient(unittest.TestCase):
             reduce_results.append(result)
 
         return reduce_results
+
+
+    def _parse_mapreduce_output(self, content: str) -> list[tuple]:
+        """Parse MapReduce output file content into list of (key, value) tuples.
+
+        Expected file format: alternating lines of key and value, e.g.
+            word1\ncount1\nword2\ncount2\n...
+        Values may be integers or Python literals (lists). We try to
+        deserialize using int() first, then ast.literal_eval, falling back
+        to the raw string.
+        """
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+
+        lines = [l for l in content.splitlines() if l != ""]
+        pairs = []
+        i = 0
+        while i < len(lines):
+            key = lines[i]
+            val = None
+            if i + 1 < len(lines):
+                raw = lines[i + 1]
+                # try int
+                try:
+                    val = int(raw)
+                except Exception:
+                    # try ast literal (e.g., list repr)
+                    try:
+                        val = ast.literal_eval(raw)
+                    except Exception:
+                        val = raw
+            pairs.append((key, val))
+            i += 2
+
+        return pairs
     
     def one_call_map_reduce_helper(self, local_job_script: str, uploaded_job_script: str, file_paths: list[str]):
         # Write the job file to HDFS
@@ -64,7 +101,7 @@ class TestClient(unittest.TestCase):
             fcn_b = f.read()
         self.client.write_file(uploaded_job_script, fcn_b)
 
-        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2)
+        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2, 'iterator_fn')
 
         # Check success message
         self.assertTrue(response.ok)
@@ -72,14 +109,21 @@ class TestClient(unittest.TestCase):
         # Check correctness of output files by simulating job locally
         local_results = self.run_job_locally(local_job_script, file_paths)
 
-        results = []
+        # Convert local results (list of tuples) into dict for order-insensitive comparison
+        local_dict = {k: v for k, v in local_results}
+
+        # Read and parse MapReduce output files into tuples, then dict
+        remote_pairs = []
         for each in response.file_paths:
             print(f"MapReduce output file: {each}")
             content = self.client.read_file(each)
             print(content)
-            results.append(content)
-        
-        self.assertEqual(results, local_results)
+            parsed = self._parse_mapreduce_output(content)
+            remote_pairs.extend(parsed)
+
+        remote_dict = {k: v for k, v in remote_pairs}
+
+        self.assertEqual(remote_dict, local_dict)
 
     # Tests
 
@@ -113,7 +157,7 @@ class TestClient(unittest.TestCase):
 
         self.one_call_map_reduce_helper(local_job_script, uploaded_job_script, file_paths)
     
-    def test_multiple_file_word_count(self):
+    def test_multiple_calls_word_count(self):
         """Test multiple successive word count calls. NOTE: assumes upload_data.py has been run."""
         local_job_script = 'client_folder/jobs/word_count.py'
         uploaded_job_script = '/jobs/word_count.py'
@@ -136,19 +180,20 @@ class TestClient(unittest.TestCase):
 
         # Check correctness of output files by simulating job locally
         local_results = self.run_job_locally(local_job_script, file_paths)
+        local_dict = {k: v for k, v in local_results}
 
-        results = []
+        # For each response, build its dict and compare to local_dict
         for each_response in responses:
-            result = []
+            remote_pairs = []
             for each in each_response.file_paths:
                 print(f"MapReduce output file: {each}")
                 content = self.client.read_file(each)
                 print(content)
-                result.append(content)
-            results.append(result)
-        
-        for result in results:
-            self.assertEqual(result, local_results)
+                parsed = self._parse_mapreduce_output(content)
+                remote_pairs.extend(parsed)
+
+            remote_dict = {k: v for k, v in remote_pairs}
+            self.assertEqual(remote_dict, local_dict)
 
 if __name__ == '__main__':
     unittest.main()
