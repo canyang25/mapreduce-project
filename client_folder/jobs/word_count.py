@@ -39,7 +39,7 @@ def map_function(input_key: str, input_value: str) -> List[Tuple[str, int]]:
     return [(word, 1) for word in words]
 
 
-def reduce_function(key: str, values: List[int]) -> Tuple[str, int]:
+def reduce_function(key: str, values:list[str]) -> Tuple[str, int]:
     """
     Reduce phase: sum up the counts for each word.
 
@@ -50,5 +50,5 @@ def reduce_function(key: str, values: List[int]) -> Tuple[str, int]:
     Returns:
         (word, total_count) tuple.
     """
-    total_count = sum(values)
+    total_count = sum([int(v) for v in values])
     return key, total_count
