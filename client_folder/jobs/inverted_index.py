@@ -21,7 +21,8 @@ def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
     """
     content = file_bytes
     doc_id = metadata.get("file_path", "unknown_document")
-    yield (doc_id, content)
+    yield (doc_id, str(content))
+
 def map_function(input_key: str, input_value: str) -> List[Tuple[str, str]]:
     """
     Map phase: Extract all unique words from the document and emit

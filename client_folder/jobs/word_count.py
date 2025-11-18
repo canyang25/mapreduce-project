@@ -18,6 +18,19 @@ Usage:
 
 from typing import List, Tuple
 
+def iterator_fn(file_bytes: bytes, metadata: dict) -> List[Tuple[str, str]]:
+    """
+    Iterator function to split file bytes into (key, value) pairs.
+    Here, key is the file path and value is the file content as a string.
+
+    Args:
+        file_bytes: The raw bytes of the input file.
+        metadata: Dictionary containing metadata such as 'file_path'.
+    """
+    content = file_bytes
+    doc_id = metadata.get("file_path", "unknown_document")
+    yield (doc_id, str(content))
+
 def map_function(input_key: str, input_value: str) -> List[Tuple[str, int]]:
     """
     Map phase: tokenize text and emit (word, 1) pairs.

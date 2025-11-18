@@ -78,7 +78,7 @@ def run_map_reduce_job(
     # 2. Run distributed MapReduce
     print("Starting MapReduce job...")
     try:
-        response = client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, num_reducers)
+        response = client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, num_reducers, 'iterator_fn')
     except Exception as e:
         print(f"MapReduce job failed")
         return
