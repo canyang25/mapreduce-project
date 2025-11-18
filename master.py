@@ -50,6 +50,7 @@ class _State:
         self.jobs = {}
         self.job_counter = 0
         self.assigned_tasks = {} # worker_id -> task dict
+        self.job_done = threading.Condition(self.job_lock)
 
     def upsert(self, worker_id: str):
         """Register or update a worker by its ID."""
@@ -154,10 +155,15 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
             # For test, assign all map tasks to the first available worker
             job_id = self.create_tasks(request)
             LOG.info(f"Created job {job_id} with pending tasks")
+            with STATE.job_lock:
+                while STATE.jobs[job_id]["maps_left"] > 0 or STATE.jobs[job_id]["reduces_left"] > 0:
+                    STATE.job_done.wait()
+            file_paths = [f"output/{job_id}/reduce_{i}.out" for i in range(request.num_reducers)]
             return master_client_pb2.MapReduceResponse(
                 ok=True,
                 message="Job scheduled",
-                job_id=job_id
+                job_id=job_id,
+                file_paths=file_paths
             )
         except Exception as e:
             LOG.error("MapReduce failed: %s", str(e))
@@ -315,6 +321,9 @@ def task_callback(future, worker_id: str, task: dict):
                         job_info["maps_left"] -= 1
                     elif task["type"] == "reduce":
                         job_info["reduces_left"] -= 1
+                    if job_info["maps_left"] == 0 and job_info["reduces_left"] == 0:
+                        STATE.job_done.notify_all()
+
         else:
             LOG.warning("Task %d failed on worker %s: %s", task["task_id"], worker_id, response.message)
             STATE.retry_task(task)
@@ -324,6 +333,7 @@ def task_callback(future, worker_id: str, task: dict):
     finally:
         STATE.assigned_tasks.pop(worker_id, None)
         STATE.mark_idle(worker_id)
+    
 
 
 def port_map(id: str):

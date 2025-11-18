@@ -19,7 +19,7 @@ message MapReduceRequest {
 
 message MapReduceResponse {
     bool ok = 1;
-   // repeated string file_paths = 2;
+    repeated string file_paths = 2;
     string message = 3;
     int32 job_id = 4;
 }
