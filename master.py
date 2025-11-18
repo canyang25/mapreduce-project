@@ -56,6 +56,22 @@ class _State:
         """Register or update a worker by its ID."""
         now = time.time()
         with self._worker_lock:
+            if worker_id in self._workers:
+                # Worker re-registering after restart - close old channel
+                old_channel = self._workers[worker_id].get("channel")
+                if old_channel:
+                    try:
+                        old_channel.close()
+                    except:
+                        pass
+                # Update existing worker entry
+                self._workers[worker_id]["last_heartbeat"] = now
+                self._workers[worker_id]["channel"] = None
+                if not self._workers[worker_id]["idle"]:
+                    self._workers[worker_id]["idle"] = True
+                    self._idle_workers += 1
+            else:
+                # New worker registration
                 self._workers[worker_id] = {"last_heartbeat": now, "idle": True, "task": None, "channel": None}
                 self._idle_workers += 1
 
@@ -276,9 +292,15 @@ def schedule_loop(interval_seconds: float = 5.0):
 def assign_task(worker_id: str, task: dict):
     STATE.assigned_tasks[worker_id] = task
     try:
+        # Always recreate channel if None to avoid stale connections
         if not STATE._workers[worker_id]["channel"]:
             STATE.create_channel(worker_id)
         channel = STATE._workers[worker_id]["channel"]
+        if not channel:
+            LOG.error("Failed to create channel for worker %s", worker_id)
+            STATE.assigned_tasks.pop(worker_id, None)
+            STATE.mark_idle(worker_id)
+            return False
         stub = master_to_worker_pb2_grpc.WorkerTaskStub(channel)
         if task["type"] == "map":
             req = master_to_worker_pb2.MapTaskRequest(
