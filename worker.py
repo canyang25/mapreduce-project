@@ -145,7 +145,7 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
                                 partitions[rid]["value"].append(str(v))
 
             for rid, partition in enumerate(partitions):
-                out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.parquet"
+                out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{request.task_id}_{rid}.parquet"
                 table = pa.table(partition)
                 with fs.open_output_stream(out_path) as out:
                     pq.write_table(table, out)
