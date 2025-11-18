@@ -74,7 +74,7 @@ class _State:
             # Reschedule failed task
             worker["channel"].close() if worker["channel"] else None
             task = self.assigned_tasks.pop(key, None)
-            self.retry_task(task)
+            self.retry_task(task) if task else None
     def list_workers(self):
         with self._worker_lock:
             return list(self._workers.keys())
