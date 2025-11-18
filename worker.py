@@ -9,6 +9,8 @@ import threading
 from concurrent import futures
 import importlib.util
 import pyarrow as pa
+import pyarrow.parquet as pq
+
 from pyarrow import fs
 from pyarrow.fs import FileSelector, FileType
 
@@ -119,7 +121,10 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
             fs = get_hdfs()
             map_fn = load_user_function(request.job_path, request.function_name)
             iterator_fn = load_user_function(request.job_path, request.iterator_fn) if request.iterator_fn else None
-            partitions = [[] for _ in range(request.num_reducers)]
+            partitions = [
+                {"key": [], "value": []} 
+                for _ in range(request.num_reducers)
+            ]
 
             for data_path in request.data_paths:
                 with fs.open_input_stream(data_path) as f:
@@ -129,23 +134,21 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
                         for key, val in iterator_fn(file_bytes, metadata):
                             for k, v in map_fn(key, val):
                                 rid = (hash(k) % request.num_reducers)
-                                partitions[rid].append(f"{k}\t{v}")
+                                partitions[rid]["key"].append(str(k))
+                                partitions[rid]["value"].append(str(v))
 
-                    else :
-                        for line in f.read().decode("utf-8").splitlines():
-                            count = 0
+                    else:
+                        for count, line in enumerate(f.read().decode("utf-8").splitlines()):
                             for k, v in map_fn(count, line):
                                 rid = (hash(k) % request.num_reducers)
-                                partitions[rid].append(f"{k}\t{v}")
-                                count+=1
-                    for line in f.read().decode("utf-8").splitlines():
-                        for k, v in map_fn(line):
-                            rid = (hash(k) % request.num_reducers)
-                            partitions[rid].append(f"{k}\t{v}")
+                                partitions[rid]["key"].append(str(k))
+                                partitions[rid]["value"].append(str(v))
 
-            for rid, lines in enumerate(partitions):
-                out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.txt"
-                write_lines(fs, out_path, lines)
+            for rid, partition in enumerate(partitions):
+                out_path = f"{request.output_dir.rstrip('/')}/{WORKER_ID}_{rid}.parquet"
+                table = pa.table(partition)
+                with fs.open_output_stream(out_path) as out:
+                    pq.write_table(table, out)
                 LOG.debug(f"[map] wrote partition rid={rid} -> {out_path}")
             LOG.info(f"[map] task {request.task_id} complete")
             return master_to_worker_pb2.Ack(ok=True, message="map done")
@@ -164,25 +167,28 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
             files = [
                 info.path
                 for info in infos
-                if info.type == FileType.File and info.path.endswith(f"_{request.partition_id}.txt")
+                if info.type == FileType.File and info.path.endswith(f"_{request.partition_id}.parquet")
             ]
 
-            groups, total_in = {}, 0
+            tables = []
             for path in files:
-                with fs.open_input_stream(path) as f:
-                    for line in f.read().decode("utf-8").splitlines():
-                        if not line:
-                            continue
-                        try:
-                            k, v = line.split("\t", 1)
-                            groups.setdefault(k, []).append(v)
-                            total_in += 1
-                        except ValueError:
-                            LOG.warning(f"Malformed line in {path}: {line!r}")
+                tables.append(pq.read_table(path, filesystem=fs))
+
+            if tables:
+                merged = pa.concat_tables(tables)
+            else:
+                merged = pa.table({"key": [], "value": []})
+
+            df = merged.to_pandas()
+            total_in = len(df)
+            if df.empty:
+                grouped = {}
+            else:
+                grouped = df.groupby("key")["value"].apply(list)
 
             out_lines = []
-            for k, vs in groups.items():
-                for out in reduce_fn(k, vs):
+            for k, values in grouped.items():
+                for out in reduce_fn(k, values):
                     if isinstance(out, tuple) and len(out) == 2:
                         ok, ov = out
                         out_lines.append(f"{ok}\t{ov}")
