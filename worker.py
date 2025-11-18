@@ -36,7 +36,7 @@ def ensure_parent_dir(fs, path: str) -> None:
 
 def load_user_function(job_path, function_name):
     fs = get_hdfs()
-    with fs.open(job_path, "rb") as f:
+    with fs.open_input_stream(job_path) as f:
         code = f.read().decode("utf-8")
     spec = importlib.util.spec_from_loader("user_job", loader=None)
     module = importlib.util.module_from_spec(spec)
@@ -48,7 +48,7 @@ def load_user_function(job_path, function_name):
 
 def write_lines(fs, path, lines):
     ensure_parent_dir(fs, path)
-    with fs.open(path, "wb") as out:
+    with fs.open_output_stream(path) as out:
         for line in lines:
             if not line.endswith("\n"):
                 line = line + "\n"
@@ -120,7 +120,7 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
             partitions = [[] for _ in range(request.num_reducers)]
 
             for data_path in request.data_paths:
-                with fs.open(data_path, "rb") as f:
+                with fs.open_input_stream(data_path) as f:
                     for line in f.read().decode("utf-8").splitlines():
                         for k, v in map_fn(line):
                             rid = (hash(k) % request.num_reducers)
@@ -146,7 +146,7 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
 
             groups, total_in = {}, 0
             for path in files:
-                with fs.open(path, "rb") as f:
+                with fs.open_input_stream(path) as f:
                     for line in f.read().decode("utf-8").splitlines():
                         if not line:
                             continue
