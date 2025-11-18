@@ -228,9 +228,9 @@ rm -f /tmp/test9_job_output.log
 
 echo ""
 echo "Test 10: Channel fix - job after worker restart"
-echo "Starting fresh with 2 workers..."
-$COMPOSE up -d --scale dn=2
-sleep 6
+echo "Starting fresh with 3 workers (for HDFS replication)..."
+$COMPOSE up -d --scale dn=3
+sleep 8
 
 echo "Running job 1..."
 docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
@@ -245,7 +245,11 @@ fi
 
 echo "Killing worker 1..."
 docker stop ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
-sleep 3
+sleep 2
+
+echo "Cleaning HDFS output (avoid stale DataNode references)..."
+docker exec ${PROJECT_NAME}-nn-1 hdfs dfs -rm -r -f /output/* 2>/dev/null || true
+sleep 1
 
 echo "Restarting worker 1..."
 docker start ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
