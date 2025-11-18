@@ -33,9 +33,13 @@ from pathlib import Path
 import master_client_pb2
 import master_client_pb2_grpc
 
-cluster_start= False
+from typing import List, Optional, Tuple, Dict
+import subprocess
+import sys
 
-class Client:
+
+
+class MapReduceClient:
     """This class abstracts MapReduce and HDFS gRPC operations"""
     def __init__(self, namenode_host, namenode_hdfs_port, namenode_client_port):
         # Set up gRPC channel to master
@@ -78,33 +82,35 @@ class Client:
         except grpc.RpcError as e:
             raise Exception(f"gRPC error: {str(e)}")
     def write_file(self, hdfs_path: str, data: bytes) -> None:
-        """Upload a file or directory to HDFS via gRPC"""
+        """Upload a file to HDFS via hdfs client"""
         try:
-            request = master_client_pb2.WriteFilesRequest(
-                file_paths=hdfs_paths,
-                file_data=data
-            )
-            response = self.stub.WriteFiles(request)
-            if not response.ok:
-                raise Exception(f"Failed to write files: {response.message}")
-        except grpc.RpcError as e:
-            raise Exception(f"Error writing files. : {str(e)}")
-    def read_files(self, hdfs_paths: List[str]) -> List[bytes]:
-        """Read a file or directory from HDFS via gRPC (placeholder)."""
+            with self.hdfs_client.open_output_stream(hdfs_path) as f:
+                f.write(data)
+        except Exception as e:
+            raise Exception(f"Failed to write file to HDFS: {str(e)}")
+    def read_file(self, hdfs_path: str) -> bytes:
+        """Read a file from HDFS via hdfs client"""
         try:
-            request = master_client_pb2.ReadFilesRequest(
-                file_paths=hdfs_paths
-            )
-            response = self.stub.ReadFiles(request)
-            if not response.ok:
-                raise Exception(f"Failed to read files: {response.message}")
-            return list(response.file_data)
-        except grpc.RpcError as e:
-            raise Exception(f"Error reading files. : {str(e)}")
-
+            with self.hdfs_client.open_input_stream(hdfs_path) as f:
+                return f.read()
+        except Exception as e:
+            raise Exception(f"Failed to read file from HDFS: {str(e)}")
+def cluster_running() -> bool:
+    """Check if the Docker Compose cluster is running."""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "ps", "--services", "--filter", "status=running"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        running_services = result.stdout.strip().splitlines()
+        return len(running_services) > 2  # At least master, worker
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to check cluster status: {e}", file=sys.stderr)
+        sys.exit(1)
 def start_cluster(compose_args: Optional[List[str]] = None) -> None:
     """Build and start the Docker Compose cluster."""
-    global cluster_started
     compose_args = compose_args or []
     try:
         # Build images
@@ -120,55 +126,27 @@ def start_cluster(compose_args: Optional[List[str]] = None) -> None:
 
 def stop_cluster(timeout: float = 2) -> None:
     """Tear down the Docker Compose cluster."""
-    global cluster_started
     try:
         subprocess.run(["docker", "compose", "down", "--timeout", str(timeout)], check=True)
-        cluster_started = False
         print("Cluster stopped.")
     except subprocess.CalledProcessError as e:
         print(f"Failed to stop cluster: {e}", file=sys.stderr)
         sys.exit(1)
-def upload_files(client: MapReduceClient, local_to_hdfs: dict[str, str]) -> None:
+def upload_files(client: MapReduceClient, local_to_hdfs: dict[Path, Path]) -> None:
     """Upload a file or directory to HDFS using gRPC."""
-    hdfs_paths, file_data = [], []
-    try:
-        for local, hdfs in local_to_hdfs.items():
-            path = Path(local).resolve()
-            if not path.exists():
-                print(f"ERROR: Local path does not exist: {path}", file=sys.stderr)
-                sys.exit(1)
-            out_paths, data = read_local_files(path, hdfs)
-            hdfs_paths.extend(out_paths)
-            file_data.extend(data)
-            client.write_files(hdfs_paths, file_data)
-            print(f"Uploaded {local} to HDFS at {hdfs}")
-    except Exception as e:
-        print(f"Failed to upload {local} to HDFS: {e}", file=sys.stderr)
-        sys.exit(1)
-def read_local_files(local_path: Path, hdfs_base: str) -> Tuple[List[str], List[bytes]]:
-    """Read local files from a directory or single file."""
-    hdfs_paths = []
-    file_data = []
-    if local_path.is_file():
-        hdfs_paths.append(hdfs_base)
-        with open(local_path, "rb") as f:
-            file_data.append(f.read())
-    elif local_path.is_dir():
-        for item in sorted(local_path.iterdir()):
-            if item.is_file():
-                hdfs_path = f"{hdfs_base}/{item.name}"
-                hdfs_paths.append(hdfs_path)
-                with open(item, "rb") as f:
-                    file_data.append(f.read())
-            elif item.is_dir():
-                sub_hdfs_base = f"{hdfs_base}/{item.name}"
-                sub_paths, sub_data = read_local_files(item, sub_hdfs_base)
-                hdfs_paths.extend(sub_paths)
-                file_data.extend(sub_data)
-    else:
-        print(f"ERROR: Local path is neither file nor directory: {local_path}", file=sys.stderr)
-        sys.exit(1)
-    return hdfs_paths, file_data
+    for local_path, hdfs_path in local_to_hdfs.items():
+        if local_path.is_file():
+            with open(local_path, "rb") as f:
+                file_data = (f.read())
+            client.write_file(str(hdfs_path), file_data)
+        elif local_path.is_dir():
+            client.hdfs_client.create_dir(str(hdfs_path))
+            for item in sorted(local_path.iterdir()):
+                upload_files(client, {item: hdfs_path / item.name})
+        else:
+            print(f"ERROR: Local path is neither file nor directory: {local_path}", file=sys.stderr)
+            sys.exit(1)
+    return
 def show_logs(services: List[str], follow: bool = False) -> None:
     """Show logs of specified Docker Compose services.
     Args:
@@ -195,6 +173,9 @@ def map_reduce(
     iterator_fn: Optional[str] = None
 ) -> None:
     """Run a MapReduce job via gRPC."""
+    if not cluster_running():
+        print("Cluster is not running. Please start the cluster first.", file=sys.stderr)
+        sys.exit(1)
     # Upload job script to HDFS
     job_name = Path(job_file).name
     hdfs_job_path = f"/jobs/{job_name}"
@@ -226,14 +207,14 @@ def map_reduce(
 
     # Wait for completion
     try:
-        client.wait_for_completion(response.job_id)
-        if response.ok:
+        result = client.wait_for_completion(response.job_id)
+        if result.ok:
             print("MapReduce job completed successfully.")
             print("Output files:")
-            file_bytes = client.read_files(response.file_paths)
+            file_bytes = [client.read_file(path) for path in result.file_paths]
             return file_bytes
         else:
-            raise Exception(f"{response.error_message}")
+            raise Exception(f"{result.error_message}")
     except Exception as e:
         print(f"Failed while waiting for job completion: {e}", file=sys.stderr)
         sys.exit(1)
@@ -247,9 +228,9 @@ Commands:
   upload <local> <hdfs>           Upload a file or directory to HDFS via gRPC.
   logs <service> [...]            Show logs for one or more services (master, worker, client).
   map_reduce <job_file> <inputs>  Run a MapReduce job to completion.
-         [--map MAP_FN]           Optional map function name (default: 'map_fn').
-         [--reduce REDUCE_FN]     Optional reduce function name (default: 'reduce_fn').
-         [--num-reducers N]       Optional number of reducers (default: 1).
+         [--map MAP_FN]           Optional map function name (default: 'map').
+         [--reduce REDUCE_FN]     Optional reduce function name (default: 'reduce').
+         [--num-reducers N]       Optional number of reducers (default: 4).
          [--iterator ITERATOR_FN] Optional iterator function name (default: None).
 
 Examples:
@@ -305,14 +286,18 @@ def main():
     command = args.command
 
     # Instantiate client for gRPC operations
-    client = MapReduceClient()
+    client = MapReduceClient(
+            namenode_host='boss',
+            namenode_hdfs_port=9000,
+            namenode_client_port=50051
+        )
 
     if command == "start":
         start_cluster()
     elif command == "stop":
         stop_cluster()
     elif command == "upload":
-        upload_files(client, args.local, args.hdfs)
+        upload_files(client, {Path(args.local): Path(args.hdfs)})
     elif command == "logs":
         show_logs(args.services, args.follow)
     elif command == "map_reduce":
