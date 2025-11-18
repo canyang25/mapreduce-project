@@ -198,6 +198,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 STATE.jobs[job_id]["pending_maps"].append({
                         "data_paths": [fp],
                         "task_id": task_counter,
+                        "iterator_fn": request.iterator
                 })
                 task_counter += 1
             STATE.jobs[job_id]["maps_left"] = task_counter
@@ -288,6 +289,7 @@ def assign_task(worker_id: str, task: dict):
                 num_reducers=STATE.jobs[task["job_id"]]["num_reducers"],
                 output_dir=STATE.jobs[task["job_id"]]["intermediate_output_dir"],
                 task_id=task["task_id"],
+                iterator_fn=task.get("iterator_fn", None)
             )
             fut = stub.RunMap.future(req)
             fut.add_done_callback(lambda r: task_callback(r, worker_id, task))

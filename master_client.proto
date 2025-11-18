@@ -15,6 +15,7 @@ message MapReduceRequest {
     string reduce = 3;
     string job_path = 4;
     int32 num_reducers = 5;
+    string iterator = 6;
 }
 
 message MapReduceResponse {

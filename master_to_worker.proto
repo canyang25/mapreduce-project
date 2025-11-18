@@ -11,6 +11,7 @@ message MapTaskRequest {
 	int32 num_reducers = 5;
     string output_dir = 6;
 	int32 task_id = 7;
+	string iterator_fn = 8;
 }
 
 // Request sent from master to a worker to run a reduce task.
