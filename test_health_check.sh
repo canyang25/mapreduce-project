@@ -28,7 +28,7 @@ sleep 2
 # Rebuild with new changes
 echo ""
 echo "[STEP 1] Rebuilding containers..."
-$COMPOSE build hdfs >/dev/null 2>&1
+docker build -t hdfs -f Dockerfile.hdfs . >/dev/null 2>&1
 $COMPOSE build nn dn >/dev/null 2>&1
 echo "[PASS] Build complete"
 
