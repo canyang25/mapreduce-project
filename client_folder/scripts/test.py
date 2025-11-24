@@ -114,7 +114,7 @@ class TestClient(unittest.TestCase):
             fcn_b = f.read()
         self.client.write_file(uploaded_job_script, fcn_b)
 
-        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2, 'iterator_fn')
+        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2, 2, 'iterator_fn')
 
         # Check success message
         self.assertTrue(response.ok)
@@ -198,7 +198,9 @@ class TestClient(unittest.TestCase):
                 'map_function',
                 'reduce_function',
                 uploaded_job_script,
-                2
+                2,
+                2,
+                'iterator_fn'
             )
             with lock:
                 responses.append(response)
@@ -249,7 +251,9 @@ class TestClient(unittest.TestCase):
             'map_function', 
             'reduce_function', 
             uploaded_job_script, 
-            0  # Invalid
+            2,
+            0,  # Invalid
+            'iterator_fn'
         )
         
         # Should either reject or return error
@@ -273,7 +277,9 @@ class TestClient(unittest.TestCase):
             'map_function',
             'reduce_function',
             uploaded_job_script,
-            2
+            2,
+            2,
+            'iterator_fn'
         )
         
         # Should fail gracefully
@@ -295,7 +301,9 @@ class TestClient(unittest.TestCase):
             'map_function_typo',  # Incorrect name
             'reduce_function',
             uploaded_job_script,
-            2
+            2,
+            2,
+            'iterator_fn'
         )
         
         # Should fail with clear error
