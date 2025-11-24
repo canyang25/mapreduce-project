@@ -32,10 +32,6 @@ This project implements a distributed MapReduce system using Docker Compose with
 ## Required Software
 - Docker and Docker Compose
 
-## Usage
-
-
-
 ## Example Data
 We include different size levels of data partitioned into separate directories. Small data help us with development and verifying basic functionality, large data gives us performance metrics and lets us test functionality at scale
 
@@ -60,13 +56,14 @@ docker compose up -d
 ```bash
 docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py
 ```
-- Run MapReduce job
+- Run MapReduce job (note if maps > number of input file paths, it defaults back to one map task per file)
 ```bash
 docker compose exec client python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/<job file name> \
     --files /client_folder/data/<file 1> \
             /client_folder/data/<file 2> \
             ...
+    --maps <number of maps>
     --reducers <number of reducers>
 ```
 ### Test Categories

@@ -28,7 +28,7 @@ class Client:
             port=namenode_hdfs_port
         )
     
-    def map_reduce(self, file_paths: list[str], map: str, reduce: str, job_path: str, num_reducers: int, iterator: str = ""):
+    def map_reduce(self, file_paths: list[str], map: str, reduce: str, job_path: str, num_maps: int, num_reducers: int, iterator: str):
         """Call map reduce"""
         try:
             request = master_client_pb2.MapReduceRequest(
@@ -36,6 +36,7 @@ class Client:
                 map=map, 
                 reduce=reduce, 
                 job_path=job_path, 
+                num_maps=num_maps,
                 num_reducers=num_reducers,
                 iterator=iterator
             )

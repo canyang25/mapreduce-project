@@ -27,6 +27,7 @@ docker exec mapreduce-project-client-1 python3 -m client_folder.scripts.interact
     --job /app/client_folder/jobs/word_count.py \
     --files /client_folder/data/small/file1.txt \
             /client_folder/data/small/file2.txt \
+    --maps 2
     --reducers 2
 ```
 

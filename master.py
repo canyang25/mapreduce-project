@@ -192,6 +192,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
         map_fn = request.map
         reduce_fn = request.reduce
         job_path = request.job_path
+        num_maps = request.num_maps
         num_reducers = request.num_reducers
         task_counter = 0
         with STATE.job_lock:
@@ -207,17 +208,32 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 "maps_left": 0,                 # reduces/maps_left -> count of map tasks unscheduled OR in-progress
                 "reduces_left": num_reducers,
                 "intermediate_output_dir" : f"output/job_{job_id}/temp/",
-                "stage": "map"
+                "stage": "map",
+                "num_retries": 0
             }
-            for fp in data_paths:
-                # Create a map task for each file
+            # Partition data_paths into `num_maps` buckets (can be >,<,= files)
+            num_files = len(data_paths)
+            num_maps = min(num_files, num_maps)
+            # Compute base size and remainder for balanced distribution
+            base = num_files // num_maps
+            rem = num_files % num_maps
+            partitions = []
+            start = 0
+            for i in range(num_maps):
+                sz = base + (1 if i < rem else 0)
+                end = start + sz
+                partitions.append(data_paths[start:end])
+                start = end
+
+            # Create a map task for each partition
+            for part in partitions:
                 STATE.jobs[job_id]["pending_maps"].append({
-                        "data_paths": [fp],
-                        "task_id": task_counter,
-                        "iterator_fn": request.iterator
+                    "data_paths": list(part),
+                    "task_id": task_counter,
+                    "iterator_fn": request.iterator
                 })
                 task_counter += 1
-            STATE.jobs[job_id]["maps_left"] = task_counter
+            STATE.jobs[job_id]["maps_left"] = len(partitions)
             for i in range(num_reducers):
                 STATE.jobs[job_id]["pending_reduces"].append({
                     "task_id": task_counter,
