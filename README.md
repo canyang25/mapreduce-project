@@ -9,14 +9,14 @@ A MapReduce implementation built with Python, gRPC, and Docker, using HDFS for s
 - **Scalable Workers**: Docker-based worker nodes that can be scaled horizontally.
 - **CLI Tool**: Python CLI for cluster management and job submission.
 
-## 🏗️ Architecture
+## Architecture
 The system consists of four main components orchestrated via Docker Compose:
 - **Master (`nn`)**: Coordinates job execution, manages worker registry, and handles task scheduling.
 - **Workers (`dn`)**: Execute Map and Reduce tasks assigned by the Master. They report health status via heartbeats.
 - **Client (`client`)**: Interface for users to submit jobs and upload data.
 
 
-## 📋 Prerequisites
+## Prerequisites
 - **Docker** & **Docker Compose**
 - **Python 3.x** (for the local CLI wrapper)
 
@@ -54,7 +54,7 @@ Stops and removes the containers.
 ./map_reduce.py stop
 ```
 
-## 📝 Writing MapReduce Jobs
+## Writing MapReduce Jobs
 Jobs are Python files located in `client_folder/jobs/`. A job file should define `map` and `reduce` functions. Optionally, you can define an `iterator` function to customize how input files are split into records. If no iterator function is provided, each line is passed to map with an arbitraty key.
 
 **Example (`word_count.py`):**
@@ -80,13 +80,13 @@ def reduce(key, values):
     yield (key, sum(values))
 ```
 
-## 🛡️ Fault Tolerance
+## Fault Tolerance
 The system implements a heartbeat mechanism to ensure worker availability:
 - **Heartbeats**: Workers send periodic heartbeats to the Master.
 - **Failure Detection**: The Master maintains a registry of active workers. If a worker fails to heartbeat within a timeout period (default 15s), it is marked as dead and removed from the pool.
 - **Testing**: Run `./test_health_check.sh` to verify failure detection logic.
 
-## 📂 Project Structure
+## Project Structure
 ```
 .
 ├── client_folder/          # Client resources
@@ -102,7 +102,7 @@ The system implements a heartbeat mechanism to ensure worker availability:
 └── tests/                  # Test scripts
 ```
 
-## 🐳 Manual Docker Commands (Alternative)
+## Manual Docker Commands (Alternative)
 If you prefer using Docker Compose directly:
 
 **Start:**
