@@ -43,10 +43,7 @@ class Client:
             
             response = self.stub.MapReduce(request)
 
-            if response.ok:
-                return response
-            else:
-                raise Exception(f"Failed map reduce task: {response.error_message}")
+            return response
         except grpc.RpcError as e:
             raise Exception(f"gRPC error: {str(e)}")
     

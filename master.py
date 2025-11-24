@@ -30,6 +30,7 @@ logging.basicConfig(
 )
 
 WORKER_PORT = 50051
+MAX_RETRIES = 5
 
 # Set up HDFS classpath (optional - health checking doesn't need it)
 try:
@@ -120,12 +121,20 @@ class _State:
         job_id = task.pop("job_id", None)
         if job_id is None:
             return
+        
         with self.job_lock:
             if job_id in self.jobs:
-                if task_type == "map":
-                    self.jobs[job_id]["pending_maps"].append(task)
-                elif task_type == "reduce":
-                    self.jobs[job_id]["pending_reduces"].append(task)
+                self.jobs[job_id]["num_retries"] += 1
+                if self.jobs[job_id]["num_retries"] >= MAX_RETRIES:
+                    LOG.warning("Job %d exceeded max retries, stopping", job_id)
+                    STATE.job_done.notify_all()
+                else:
+                    # Re-queue task for retry
+                    if task_type == "map":
+                        self.jobs[job_id]["pending_maps"].append(task)
+                    elif task_type == "reduce":
+                        self.jobs[job_id]["pending_reduces"].append(task)
+        
     def create_channel(self, worker_id: str):
         with self._worker_lock:
             if worker_id in self._workers:
@@ -173,7 +182,17 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
             LOG.info(f"Created job {job_id} with pending tasks")
             with STATE.job_lock:
                 while STATE.jobs[job_id]["maps_left"] > 0 or STATE.jobs[job_id]["reduces_left"] > 0:
+                    # Break early if max retries exceeded
+                    if STATE.jobs[job_id]["num_retries"] >= MAX_RETRIES:
+                        LOG.error("Job %d exceeded max retries (%d)", job_id, STATE.jobs[job_id]["num_retries"])
+                        return master_client_pb2.MapReduceResponse(
+                            ok=False,
+                            message="Job failed - excessive task retries",
+                            job_id=job_id,
+                            file_paths=[]
+                        )
                     STATE.job_done.wait()
+            
             file_paths = [f"output/job_{job_id}/reduce_{i}.txt" for i in range(request.num_reducers)]
             return master_client_pb2.MapReduceResponse(
                 ok=True,
@@ -187,6 +206,7 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 ok=False,
                 message="MapReduce failed: " + str(e)
             )
+        
     def create_tasks(self, request : master_client_pb2.MapReduceRequest) -> int:
         data_paths = request.file_paths
         map_fn = request.map
@@ -349,6 +369,7 @@ def assign_task(worker_id: str, task: dict):
         STATE.mark_idle(worker_id)
         return False
     return True
+    
 def task_callback(future, worker_id: str, task: dict):
     try:
         response = future.result()
@@ -365,10 +386,10 @@ def task_callback(future, worker_id: str, task: dict):
                         STATE.job_done.notify_all()
 
         else:
-            LOG.warning("Task %d failed on worker %s: %s. Retrying...", task["task_id"], worker_id, response.message)
+            LOG.warning(f"Task {task["task_id"]} failed on worker {worker_id}: {response.message}. Total retries {STATE.jobs[task["job_id"]]["num_retries"]}. Retrying...")
             STATE.retry_task(task)
     except Exception as e:
-        LOG.error("Task %d callback failed for worker %s: %s. Retrying task...", task["task_id"], worker_id, e)
+        LOG.error(f"Task {task["task_id"]} callback failed for worker {worker_id}: {e}. Total retries {STATE.jobs[task["job_id"]]["num_retries"]}. Retrying task...")
         STATE.retry_task(task)
     finally:
         STATE.assigned_tasks.pop(worker_id, None)
