@@ -30,6 +30,7 @@ logging.basicConfig(
 )
 
 WORKER_PORT = 50051
+MAX_RETRIES = 5
 
 # Set up HDFS classpath (optional - health checking doesn't need it)
 try:
@@ -56,6 +57,22 @@ class _State:
         """Register or update a worker by its ID."""
         now = time.time()
         with self._worker_lock:
+            if worker_id in self._workers:
+                # Worker re-registering after restart - close old channel
+                old_channel = self._workers[worker_id].get("channel")
+                if old_channel:
+                    try:
+                        old_channel.close()
+                    except:
+                        pass
+                # Update existing worker entry
+                self._workers[worker_id]["last_heartbeat"] = now
+                self._workers[worker_id]["channel"] = None
+                if not self._workers[worker_id]["idle"]:
+                    self._workers[worker_id]["idle"] = True
+                    self._idle_workers += 1
+            else:
+                # New worker registration
                 self._workers[worker_id] = {"last_heartbeat": now, "idle": True, "task": None, "channel": None}
                 self._idle_workers += 1
 
@@ -74,7 +91,7 @@ class _State:
             # Reschedule failed task
             worker["channel"].close() if worker["channel"] else None
             task = self.assigned_tasks.pop(key, None)
-            self.retry_task(task)
+            self.retry_task(task) if task else None
     def list_workers(self):
         with self._worker_lock:
             return list(self._workers.keys())
@@ -104,12 +121,20 @@ class _State:
         job_id = task.pop("job_id", None)
         if job_id is None:
             return
+        
         with self.job_lock:
             if job_id in self.jobs:
-                if task_type == "map":
-                    self.jobs[job_id]["pending_maps"].append(task)
-                elif task_type == "reduce":
-                    self.jobs[job_id]["pending_reduces"].append(task)
+                self.jobs[job_id]["num_retries"] += 1
+                if self.jobs[job_id]["num_retries"] >= MAX_RETRIES:
+                    LOG.warning("Job %d exceeded max retries, stopping", job_id)
+                    STATE.job_done.notify_all()
+                else:
+                    # Re-queue task for retry
+                    if task_type == "map":
+                        self.jobs[job_id]["pending_maps"].append(task)
+                    elif task_type == "reduce":
+                        self.jobs[job_id]["pending_reduces"].append(task)
+        
     def create_channel(self, worker_id: str):
         with self._worker_lock:
             if worker_id in self._workers:
@@ -157,7 +182,17 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
             LOG.info(f"Created job {job_id} with pending tasks")
             with STATE.job_lock:
                 while STATE.jobs[job_id]["maps_left"] > 0 or STATE.jobs[job_id]["reduces_left"] > 0:
+                    # Break early if max retries exceeded
+                    if STATE.jobs[job_id]["num_retries"] >= MAX_RETRIES:
+                        LOG.error("Job %d exceeded max retries (%d)", job_id, STATE.jobs[job_id]["num_retries"])
+                        return master_client_pb2.MapReduceResponse(
+                            ok=False,
+                            message="Job failed - excessive task retries",
+                            job_id=job_id,
+                            file_paths=[]
+                        )
                     STATE.job_done.wait()
+            
             file_paths = [f"output/job_{job_id}/reduce_{i}.txt" for i in range(request.num_reducers)]
             return master_client_pb2.MapReduceResponse(
                 ok=True,
@@ -171,11 +206,13 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 ok=False,
                 message="MapReduce failed: " + str(e)
             )
+        
     def create_tasks(self, request : master_client_pb2.MapReduceRequest) -> int:
         data_paths = request.file_paths
         map_fn = request.map
         reduce_fn = request.reduce
         job_path = request.job_path
+        num_maps = request.num_maps
         num_reducers = request.num_reducers
         task_counter = 0
         with STATE.job_lock:
@@ -191,17 +228,32 @@ class MasterClientService(master_client_pb2_grpc.MasterClientServicer):
                 "maps_left": 0,                 # reduces/maps_left -> count of map tasks unscheduled OR in-progress
                 "reduces_left": num_reducers,
                 "intermediate_output_dir" : f"output/job_{job_id}/temp/",
-                "stage": "map"
+                "stage": "map",
+                "num_retries": 0
             }
-            for fp in data_paths:
-                # Create a map task for each file
+            # Partition data_paths into `num_maps` buckets (can be >,<,= files)
+            num_files = len(data_paths)
+            num_maps = min(num_files, num_maps)
+            # Compute base size and remainder for balanced distribution
+            base = num_files // num_maps
+            rem = num_files % num_maps
+            partitions = []
+            start = 0
+            for i in range(num_maps):
+                sz = base + (1 if i < rem else 0)
+                end = start + sz
+                partitions.append(data_paths[start:end])
+                start = end
+
+            # Create a map task for each partition
+            for part in partitions:
                 STATE.jobs[job_id]["pending_maps"].append({
-                        "data_paths": [fp],
-                        "task_id": task_counter,
-                        "iterator_fn": request.iterator
+                    "data_paths": list(part),
+                    "task_id": task_counter,
+                    "iterator_fn": request.iterator
                 })
                 task_counter += 1
-            STATE.jobs[job_id]["maps_left"] = task_counter
+            STATE.jobs[job_id]["maps_left"] = len(partitions)
             for i in range(num_reducers):
                 STATE.jobs[job_id]["pending_reduces"].append({
                     "task_id": task_counter,
@@ -276,9 +328,15 @@ def schedule_loop(interval_seconds: float = 5.0):
 def assign_task(worker_id: str, task: dict):
     STATE.assigned_tasks[worker_id] = task
     try:
+        # Always recreate channel if None to avoid stale connections
         if not STATE._workers[worker_id]["channel"]:
             STATE.create_channel(worker_id)
         channel = STATE._workers[worker_id]["channel"]
+        if not channel:
+            LOG.error("Failed to create channel for worker %s", worker_id)
+            STATE.assigned_tasks.pop(worker_id, None)
+            STATE.mark_idle(worker_id)
+            return False
         stub = master_to_worker_pb2_grpc.WorkerTaskStub(channel)
         if task["type"] == "map":
             req = master_to_worker_pb2.MapTaskRequest(
@@ -311,6 +369,7 @@ def assign_task(worker_id: str, task: dict):
         STATE.mark_idle(worker_id)
         return False
     return True
+    
 def task_callback(future, worker_id: str, task: dict):
     try:
         response = future.result()
@@ -327,10 +386,10 @@ def task_callback(future, worker_id: str, task: dict):
                         STATE.job_done.notify_all()
 
         else:
-            LOG.warning("Task %d failed on worker %s: %s. Retrying...", task["task_id"], worker_id, response.message)
+            LOG.warning(f"Task {task["task_id"]} failed on worker {worker_id}: {response.message}. Total retries {STATE.jobs[task["job_id"]]["num_retries"]}. Retrying...")
             STATE.retry_task(task)
     except Exception as e:
-        LOG.error("Task %d callback failed for worker %s: %s. Retrying task...", task["task_id"], worker_id, e)
+        LOG.error(f"Task {task["task_id"]} callback failed for worker {worker_id}: {e}. Total retries {STATE.jobs[task["job_id"]]["num_retries"]}. Retrying task...")
         STATE.retry_task(task)
     finally:
         STATE.assigned_tasks.pop(worker_id, None)
@@ -380,7 +439,7 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
             return worker_to_master_pb2.HeartbeatReply(ok=False, message=str(e))
 
 def make_master_server(client_bind = '[::]:50051', worker_bind = '[::]:8081'):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
     worker_to_master_pb2_grpc.add_RegistryServicer_to_server(RegistryServicer(), server)
     server.add_insecure_port(client_bind)

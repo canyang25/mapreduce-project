@@ -24,24 +24,25 @@ This project implements a distributed MapReduce system using Docker Compose with
 │   ├── data/           # Data that can be used
 │   ├── jobs/           # Map Reduce Jobs
 │   └── scripts/       
-├── proto/            # Protocol buffer definitions
-└── examples/         # Example data and jobs
+├── docker-compose.yml  # Docker compose file - orchestrate all required containers
+├── master.py           # All the code for the master node for the MapReduce implementation
+└── worker.py           # All the code for the worker nodes for the MapReduce implementation
 ```
 
 ## Required Software
 - Docker and Docker Compose
 
-## Usage
-
-Upload Example Data
-Write a MapReduce Job
-Submit a Job
-Monitor Job Progress and view results
-
 ## Example Data
 We include different size levels of data partitioned into separate directories. Small data help us with development and verifying basic functionality, large data gives us performance metrics and lets us test functionality at scale
 
 ## Example usage
+High level:
+- Upload Example Data
+- Write a MapReduce Job
+- Submit a Job
+- Monitor Job Progress and view results
+
+Specific:
 - Upload any data you want to do a MapReduce job to client_folder/data
 - Upload any MapReduce job to client_folder/jobs. It should follow standard MapReduce format: 
     - map (k1, v1) -> list(k2, v2)
@@ -55,18 +56,19 @@ docker compose up -d
 ```bash
 docker exec mapreduce-project-client-1 python3 client_folder/scripts/upload_data.py
 ```
-- Run MapReduce job
+- Run MapReduce job (note if maps > number of input file paths, it defaults back to one map task per file)
 ```bash
 docker compose exec client python3 -m client_folder.scripts.interactive_client \
     --job /app/client_folder/jobs/<job file name> \
     --files /client_folder/data/<file 1> \
             /client_folder/data/<file 2> \
             ...
+    --maps <number of maps>
     --reducers <number of reducers>
 ```
 ### Test Categories
 1. **Health Tests**: Tests worker health checking (test_health_check.sh)
-2. **Client-end Tests**: Tests end-to-end functionality by querying the system through different senarios 
+2. **Client-end Tests**: Tests end-to-end functionality by querying the system through different senarios
 
 ## Special Features
 ### Worker Health Monitoring

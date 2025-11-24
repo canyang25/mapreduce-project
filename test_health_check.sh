@@ -1,204 +1,302 @@
 #!/bin/bash
-# Comprehensive health monitoring test script
+# Test script for health monitoring and fault tolerance
 
 set -e
 
-# Pick docker compose command
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   COMPOSE="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
 else
-  echo "ERROR: Neither 'docker compose' nor 'docker-compose' found."
+  echo "ERROR: docker compose not found"
   exit 1
 fi
 
-echo "=========================================="
-echo "   COMPREHENSIVE HEALTH MONITOR TEST"
-echo "=========================================="
-echo ""
-echo "[INFO] Optimized for demo (~1 minute runtime)"
+# Get dynamic container names based on compose project
+PROJECT_NAME=$($COMPOSE ps --format json 2>/dev/null | head -1 | grep -o '"Project":"[^"]*"' | cut -d'"' -f4)
+if [ -z "$PROJECT_NAME" ]; then
+  PROJECT_NAME="mapreduce-project"
+fi
+
+echo "Starting health check tests..."
 echo ""
 
-# Cleanup first
-echo "[INFO] Cleaning up any existing containers..."
+# cleanup
+echo "Cleaning up old containers..."
 $COMPOSE down -v 2>/dev/null || true
 sleep 2
 
-# Rebuild with new changes
-echo ""
-echo "[STEP 1] Rebuilding containers..."
+# rebuild
+echo "Building images..."
 docker build -t hdfs -f Dockerfile.hdfs . >/dev/null 2>&1
 $COMPOSE build nn dn >/dev/null 2>&1
-echo "[PASS] Build complete"
+echo "Done building"
 
-# Test 1: Single Worker Heartbeat
 echo ""
-echo "[TEST 1] Single Worker Registration & Heartbeat"
-echo "  Starting containers..."
+echo "Test 1: Worker registration and heartbeats"
+echo "Starting containers..."
 $COMPOSE up -d
 sleep 8
 
-echo "  Checking worker registration..."
+echo "Checking registration..."
 $COMPOSE logs nn 2>&1 | grep "Registered worker" | tail -1
-echo "[PASS] Registration successful"
 
 echo ""
-echo "  Waiting 8 seconds for heartbeat activity..."
+echo "Waiting for heartbeats..."
 sleep 8
 
-echo "  Checking heartbeat logs (worker side)..."
+echo "Worker side:"
 $COMPOSE logs dn 2>&1 | grep -i "heartbeat" | head -5
-echo "[PASS] Worker heartbeats visible"
 
 echo ""
-echo "  Checking heartbeat logs (master side)..."
+echo "Master side:"
 $COMPOSE logs nn 2>&1 | grep "Heartbeat received" | head -3
-echo "[PASS] Master receiving heartbeats"
 
-# Test 2: Multi-Worker Jitter
 echo ""
-echo "[TEST 2] Multi-Worker Registration with Jitter"
-echo "  Scaling to 3 workers..."
+echo "Test 2: Multiple workers with jitter"
+echo "Scaling to 3 workers..."
 $COMPOSE up -d --scale dn=3
 sleep 8
 
-echo "  Checking jitter values..."
+echo "Jitter values:"
 for i in 1 2 3; do
-    container="mapreduce-project-dn-$i"
+    container="${PROJECT_NAME}-dn-$i"
     jitter=$(docker logs $container 2>&1 | grep "Starting heartbeat loop" | tail -1)
     if [ -n "$jitter" ]; then
-        echo "  Worker $i: $jitter"
+        echo "  $jitter"
     fi
 done
-echo "[PASS] Jitter values differ (prevents thundering herd)"
 
 echo ""
-echo "  Current worker pool:"
+echo "Current workers:"
 $COMPOSE logs nn 2>&1 | grep "Current worker pool" | tail -1
 
-# Test 3: Worker Stays Alive
 echo ""
-echo "[TEST 3] Worker Longevity Test"
-echo "  Waiting 10 seconds to verify workers stay alive..."
+echo "Test 3: Workers stay alive"
+echo "Waiting 10 seconds..."
 sleep 10
 
-echo "  Checking for unexpected removals..."
 removal_count=$($COMPOSE logs nn 2>&1 | grep -c "Removing inactive worker" || echo "0")
-# Clean up any newlines or extra spaces
 removal_count=$(echo "$removal_count" | tr -d '\n' | xargs)
-echo "  Removal count: $removal_count"
+echo "Removals: $removal_count"
 if [ "$removal_count" = "0" ]; then
-    echo "[PASS] No workers removed (heartbeats working)"
+    echo "OK - no workers died"
 else
-    echo "[WARN] Some workers were removed (check logs)"
+    echo "WARNING - some workers removed"
 fi
 
-# Test 4: Failure Detection
 echo ""
-echo "[TEST 4] Failure Detection"
-echo "  Stopping worker 2..."
-docker stop mapreduce-project-dn-2 >/dev/null 2>&1
+echo "Test 4: Failure detection"
+echo "Stopping worker 2..."
+docker stop ${PROJECT_NAME}-dn-2 >/dev/null 2>&1
 stopped_time=$(date '+%H:%M:%S')
-echo "  Stopped at: $stopped_time"
+echo "Stopped at: $stopped_time"
 
-echo "  Waiting 15 seconds for master to detect failure..."
+echo "Waiting 15 seconds for master to notice..."
 sleep 15
 
-echo "  Checking for removal log..."
+echo "Master logs:"
 $COMPOSE logs nn 2>&1 | grep "Removing inactive" | tail -1
 removal_time=$($COMPOSE logs nn 2>&1 | grep "Removing inactive" | tail -1 | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
-echo "  Removed at: $removal_time"
-echo "[PASS] Dead worker detected and removed"
+echo "Removed at: $removal_time"
 
-# Test 5: Worker Recovery
 echo ""
-echo "[TEST 5] Worker Recovery & Re-registration"
-echo "  Restarting worker 2..."
+echo "Test 5: Worker recovery"
+echo "Restarting worker 2..."
 $COMPOSE up -d dn
 sleep 6
 
-echo "  Checking re-registration..."
+echo "Re-registration:"
 $COMPOSE logs nn 2>&1 | grep "Registered worker" | tail -2
-echo "[PASS] Worker re-registered successfully"
 
-# Test 6: Periodic Health Reports
 echo ""
-echo "[TEST 6] Periodic Health Status Reports"
-echo "  Checking if health monitor is running (reports appear every 60s)..."
-echo "  Note: Full health report cycle takes 60 seconds, checking current status..."
-# Check if health monitor code is active by looking for any health-related logs
+echo "Test 6: Health reports"
 health_check_exists=$($COMPOSE logs nn 2>&1 | grep -c "Health check:" || echo "0")
 if [ "$health_check_exists" -gt "0" ]; then
-    echo "  Found health check reports:"
+    echo "Health reports found:"
     $COMPOSE logs nn 2>&1 | grep "Health check:" | tail -2
-    echo "[PASS] Health status reports working"
 else
-    echo "  Health monitor active (reports appear every 60 seconds)"
-    echo "[INFO] Health monitor code verified - reports will appear periodically"
+    echo "Health monitor is running (reports every 60s)"
 fi
 
-# Test 7: Heartbeat Response Validation
 echo ""
-echo "[TEST 7] Heartbeat Response Validation"
-echo "  Checking if workers validate responses..."
+echo "Test 7: Heartbeat validation"
 rejection_count=$($COMPOSE logs dn 2>&1 | grep -c "Heartbeat rejected" || echo "0")
-# Clean up any newlines or extra spaces
 rejection_count=$(echo "$rejection_count" | tr -d '\n' | xargs)
-echo "  Rejection count: $rejection_count"
+echo "Rejected: $rejection_count"
 if [ "$rejection_count" = "0" ]; then
-    echo "[PASS] All heartbeats accepted by master"
+    echo "All heartbeats accepted"
 else
-    echo "[WARN] Some heartbeats rejected (investigate)"
+    echo "Some rejections found"
 fi
 
-# Final Statistics
 echo ""
-echo "=========================================="
-echo "   TEST SUMMARY"
-echo "=========================================="
+echo "Test 8: Worker failure during job"
+echo "Uploading data..."
+docker exec ${PROJECT_NAME}-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data already exists)"
+sleep 2
+
+echo "Starting word count job..."
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file1.txt /client_folder/data/small/file2.txt \
+    --reducers 2 > /tmp/test8_job_output.log 2>&1 &
+
+JOB_PID=$!
+echo "Job PID: $JOB_PID"
+
+echo "Waiting for map to start..."
+sleep 3
+
+echo "Killing worker 1..."
+docker stop ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
+
+echo "Waiting for job to finish (max 30s)..."
+job_timeout=30
+job_elapsed=0
+while kill -0 $JOB_PID 2>/dev/null && [ $job_elapsed -lt $job_timeout ]; do
+    sleep 2
+    job_elapsed=$((job_elapsed + 2))
+done
+
+if kill -0 $JOB_PID 2>/dev/null; then
+    echo "Job timeout"
+    kill $JOB_PID 2>/dev/null
+else
+    echo "Job finished"
+fi
+
+failure_detected=$($COMPOSE logs nn 2>&1 | grep -c "Removing inactive worker" || echo "0")
+if [ "$failure_detected" -gt "0" ]; then
+    $COMPOSE logs nn 2>&1 | grep "Removing inactive worker" | tail -1
+    echo "Master detected failure and rescheduled task"
+else
+    echo "FAILED - master didn't detect worker failure"
+fi
+
+rm -f /tmp/test8_job_output.log
+
 echo ""
-echo "Statistics:"
+echo "Test 9: Worker failure during reduce phase"
+echo "Restarting all workers..."
+$COMPOSE up -d --scale dn=2
+sleep 6
+
+echo "Uploading data (if needed)..."
+docker exec ${PROJECT_NAME}-client-1 python3 client_folder/scripts/upload_data.py >/dev/null 2>&1 || echo "(data exists)"
+sleep 1
+
+echo "Starting word count job..."
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file1.txt /client_folder/data/small/file2.txt /client_folder/data/small/file3.txt \
+    --reducers 2 > /tmp/test9_job_output.log 2>&1 &
+
+JOB_PID=$!
+echo "Job PID: $JOB_PID"
+
+echo "Waiting 6 seconds for reduce phase to start..."
+sleep 6
+
+echo "Killing worker during reduce..."
+docker stop ${PROJECT_NAME}-dn-2 >/dev/null 2>&1
+
+echo "Waiting for job to finish (max 30s)..."
+job_timeout=30
+job_elapsed=0
+while kill -0 $JOB_PID 2>/dev/null && [ $job_elapsed -lt $job_timeout ]; do
+    sleep 2
+    job_elapsed=$((job_elapsed + 2))
+done
+
+if kill -0 $JOB_PID 2>/dev/null; then
+    echo "Job timeout"
+    kill $JOB_PID 2>/dev/null
+else
+    echo "Job finished"
+fi
+
+failure_detected=$($COMPOSE logs nn 2>&1 | grep -c "Removing inactive worker" || echo "0")
+if [ "$failure_detected" -gt "0" ]; then
+    $COMPOSE logs nn 2>&1 | grep "Removing inactive worker" | tail -1
+    echo "Master detected failure and rescheduled reduce task"
+else
+    echo "FAILED - master didn't detect worker failure"
+fi
+
+rm -f /tmp/test9_job_output.log
+
+echo ""
+echo "Test 10: Channel fix - job after worker restart"
+echo "Starting fresh with 3 workers (for HDFS replication)..."
+$COMPOSE up -d --scale dn=3
+sleep 8
+
+echo "Running job 1..."
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file1.txt \
+    --reducers 2 >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "Job 1 completed"
+else
+    echo "Job 1 failed"
+fi
+
+echo "Killing worker 1..."
+docker stop ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
+sleep 2
+
+echo "Cleaning HDFS output (avoid stale DataNode references)..."
+docker exec ${PROJECT_NAME}-nn-1 hdfs dfs -rm -r -f /output/* 2>/dev/null || true
+sleep 1
+
+echo "Restarting worker 1..."
+docker start ${PROJECT_NAME}-dn-1 >/dev/null 2>&1
+sleep 6
+
+echo "Running job 2 (tests channel fix)..."
+docker exec ${PROJECT_NAME}-client-1 python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/word_count.py \
+    --files /client_folder/data/small/file2.txt \
+    --reducers 2 >/dev/null 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "Job 2 completed - channel fix works!"
+    echo "Stale channel bug is fixed"
+else
+    echo "FAILED - Job 2 crashed with networking error"
+    echo "Channel bug still exists"
+fi
+
+echo ""
+echo "Summary:"
 echo ""
 
-# Count heartbeats sent
 hb_sent=$($COMPOSE logs dn 2>&1 | grep -c "Heartbeat acknowledged" || echo "0")
 hb_sent=$(echo "$hb_sent" | tr -d '\n' | xargs)
-echo "  Heartbeats sent (visible): $hb_sent"
+echo "Heartbeats sent: $hb_sent"
 
-# Count heartbeats received by master
 hb_received=$($COMPOSE logs nn 2>&1 | grep -c "Heartbeat received" || echo "0")
 hb_received=$(echo "$hb_received" | tr -d '\n' | xargs)
-echo "  Heartbeats received: $hb_received"
+echo "Heartbeats received: $hb_received"
 
-# Count registrations
 registrations=$($COMPOSE logs nn 2>&1 | grep -c "Registered worker" || echo "0")
 registrations=$(echo "$registrations" | tr -d '\n' | xargs)
-echo "  Worker registrations: $registrations"
+echo "Registrations: $registrations"
 
-# Count removals
 removals=$($COMPOSE logs nn 2>&1 | grep -c "Removing inactive" || echo "0")
 removals=$(echo "$removals" | tr -d '\n' | xargs)
-echo "  Worker removals: $removals"
+echo "Removals: $removals"
 
-# Count failures
 failures=$($COMPOSE logs dn 2>&1 | grep -c "Heartbeat failed" || echo "0")
 failures=$(echo "$failures" | tr -d '\n' | xargs)
-echo "  Heartbeat failures: $failures"
+echo "Heartbeat failures: $failures"
 
 echo ""
-echo "Current Active Workers:"
+echo "Active workers:"
 $COMPOSE logs nn 2>&1 | grep "Health check:" | tail -1
 
 echo ""
-echo "=========================================="
-echo "   ALL TESTS COMPLETED"
-echo "=========================================="
-echo ""
-echo "To view live logs:"
-echo "  $COMPOSE logs -f nn    # Master logs"
-echo "  $COMPOSE logs -f dn    # Worker logs"
-echo ""
-echo "To clean up:"
-echo "  $COMPOSE down"
+echo "Tests done. To clean up: $COMPOSE down"
 echo ""

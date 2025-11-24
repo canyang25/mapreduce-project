@@ -15,11 +15,13 @@ The job file is:
 
 Example usage (inside client container):
 
-    python -m client_folder.scripts.interactive_client \
-        --job /app/client_folder/jobs/inverted_index.py \
-        --files /client_folder/data/small/file1.txt \
-                /client_folder/data/small/file2.txt \
-        --reducers 2
+    docker compose exec client python3 -m client_folder.scripts.interactive_client \
+    --job /app/client_folder/jobs/<job file name> \
+    --files /client_folder/data/<file 1> \
+            /client_folder/data/<file 2> \
+            ...
+    --maps <number of mappers> \
+    --reducers <number of reducers>
 """
 from .client import Client
 
@@ -53,6 +55,7 @@ def run_map_reduce_job(
     local_job_script: str,
     uploaded_job_script: str,
     file_paths: List[str],
+    num_maps: int,
     num_reducers: int,
 ):
     """
@@ -78,7 +81,7 @@ def run_map_reduce_job(
     # 2. Run distributed MapReduce
     print("Starting MapReduce job...")
     try:
-        response = client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, num_reducers, 'iterator_fn')
+        response = client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, num_maps, num_reducers, 'iterator_fn')
     except Exception as e:
         print(f"MapReduce job failed")
         return
@@ -116,13 +119,21 @@ def parse_args() -> argparse.Namespace:
         help="List of HDFS input file paths to process.",
     )
     parser.add_argument(
+        "--maps",
+        type=int,
+        default=None,
+        help="Number of reducers to use (default: number of input files).",
+    )
+    parser.add_argument(
         "--reducers",
         type=int,
         default=2,
         help="Number of reducers to use (default: 2).",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.maps = len(args.files)
+    return args
 
 
 def main():
@@ -132,6 +143,7 @@ def main():
         local_job_script=args.job,
         uploaded_job_script=uploaded_job_script,
         file_paths=args.files,
+        num_maps=args.maps,
         num_reducers=args.reducers,
     )
 

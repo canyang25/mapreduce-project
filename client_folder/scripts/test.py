@@ -7,6 +7,7 @@ import time
 import importlib.util
 import sys
 import ast
+from threading import Thread, Lock
 
 def load_function_from_path(path, func_name):
     # Create module spec
@@ -30,7 +31,17 @@ class TestClient(unittest.TestCase):
         )
         # Give time for HDFS to be ready
         time.sleep(5)
-        self.maxDiff = None
+    
+    def tearDown(self):
+        """Clean HDFS output after each test to avoid DataNode issues."""
+        import subprocess
+        # Clean up output directory to prevent stale DataNode references
+        subprocess.run(
+            ['docker', 'exec', 'mapreduce-project-nn-1', 
+             'hdfs', 'dfs', '-rm', '-r', '-f', '/output/*'],
+            capture_output=True, check=False
+        )
+        time.sleep(1)
     
     # Helper functions
 
@@ -96,12 +107,14 @@ class TestClient(unittest.TestCase):
         return pairs
     
     def one_call_map_reduce_helper(self, local_job_script: str, uploaded_job_script: str, file_paths: list[str]):
+        self.maxDiff = None
+
         # Write the job file to HDFS
         with open(local_job_script, 'rb') as f:
             fcn_b = f.read()
         self.client.write_file(uploaded_job_script, fcn_b)
 
-        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2, 'iterator_fn')
+        response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2, 2, 'iterator_fn')
 
         # Check success message
         self.assertTrue(response.ok)
@@ -115,9 +128,9 @@ class TestClient(unittest.TestCase):
         # Read and parse MapReduce output files into tuples, then dict
         remote_pairs = []
         for each in response.file_paths:
-            print(f"MapReduce output file: {each}")
+            # print(f"MapReduce output file: {each}")
             content = self.client.read_file(each)
-            print(content)
+            # print(content)
             parsed = self._parse_mapreduce_output(content)
             remote_pairs.extend(parsed)
 
@@ -158,42 +171,145 @@ class TestClient(unittest.TestCase):
         self.one_call_map_reduce_helper(local_job_script, uploaded_job_script, file_paths)
     
     def test_multiple_calls_word_count(self):
-        """Test multiple successive word count calls. NOTE: assumes upload_data.py has been run."""
+        """Test multiple concurrent word count calls on the same file. NOTE: assumes upload_data.py has been run."""
         local_job_script = 'client_folder/jobs/word_count.py'
         uploaded_job_script = '/jobs/word_count.py'
-        file_paths = ['/client_folder/data/small/file1.txt']
+        file_paths = ['/client_folder/data/small/file1.txt']  # same file for all threads
 
-        # Write the job file to HDFS
+        self.maxDiff = None
+
+        # Write the job file to HDFS once
         with open(local_job_script, 'rb') as f:
             fcn_b = f.read()
         self.client.write_file(uploaded_job_script, fcn_b)
 
-        responses = []
-        for i in range(3):
-            file_paths = [f'/client_folder/data/small/file{ i + 1 }.txt']
-            response = self.client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, 2)
-            responses.append(response)
-
-        # Check success message
-        for each_response in responses:
-            self.assertTrue(each_response.ok)
-
-        # Check correctness of output files by simulating job locally
+        # Precompute expected local result for this file
         local_results = self.run_job_locally(local_job_script, file_paths)
         local_dict = {k: v for k, v in local_results}
 
-        # For each response, build its dict and compare to local_dict
-        for each_response in responses:
+        # Container for thread results: list of responses
+        responses = []
+        lock = Lock()
+
+        def worker():
+            # Each worker calls map_reduce on the SAME file_paths
+            response = self.client.map_reduce(
+                file_paths,
+                'map_function',
+                'reduce_function',
+                uploaded_job_script,
+                2,
+                2,
+                'iterator_fn'
+            )
+            with lock:
+                responses.append(response)
+
+        # Launch threads
+        threads = []
+        for _ in range(3):
+            t = Thread(target=worker)
+            t.start()
+            threads.append(t)
+
+        # Wait for all to finish
+        for t in threads:
+            t.join()
+
+        # Now check each response independently
+        for response in responses:
+            # 1) Response should be OK
+            self.assertTrue(response.ok)
+
+            # 2) Build remote result dict
             remote_pairs = []
-            for each in each_response.file_paths:
-                print(f"MapReduce output file: {each}")
+            for each in response.file_paths:
+                # print(f"MapReduce output file: {each}")
                 content = self.client.read_file(each)
-                print(content)
+                # print(content)
                 parsed = self._parse_mapreduce_output(content)
                 remote_pairs.extend(parsed)
 
             remote_dict = {k: v for k, v in remote_pairs}
+
+            # 3) Compare local vs remote for that call
             self.assertEqual(remote_dict, local_dict)
+    
+    def test_invalid_num_reducers_zero(self):
+        """Test that num_reducers=0 is handled gracefully."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/client_folder/data/small/file1.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit with num_reducers=0 - should fail
+        response = self.client.map_reduce(
+            file_paths, 
+            'map_function', 
+            'reduce_function', 
+            uploaded_job_script, 
+            2,
+            0,  # Invalid
+            'iterator_fn'
+        )
+        
+        # Should either reject or return error
+        # Depending on implementation, check for failure
+        # If system doesn't validate yet, this will expose that
+        self.assertFalse(response.ok, "System should reject num_reducers=0")
+    
+    def test_nonexistent_file(self):
+        """Test behavior when input file doesn't exist in HDFS."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/nonexistent/fake_file.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit job with non-existent file
+        response = self.client.map_reduce(
+            file_paths,
+            'map_function',
+            'reduce_function',
+            uploaded_job_script,
+            2,
+            2,
+            'iterator_fn'
+        )
+        
+        # Should fail gracefully
+        self.assertFalse(response.ok, "System should handle non-existent file gracefully")
+    
+    def test_incorrect_function_name(self):
+        """Test that incorrect function names are handled."""
+        local_job_script = 'client_folder/jobs/word_count.py'
+        uploaded_job_script = '/jobs/word_count.py'
+        file_paths = ['/client_folder/data/small/file1.txt']
+        
+        # Upload job script
+        with open(local_job_script, 'rb') as f:
+            self.client.write_file(uploaded_job_script, f.read())
+        
+        # Submit with wrong function name
+        response = self.client.map_reduce(
+            file_paths,
+            'map_function_typo',  # Incorrect name
+            'reduce_function',
+            uploaded_job_script,
+            2,
+            2,
+            'iterator_fn'
+        )
+        
+        # Should fail with clear error
+        self.assertFalse(response.ok, "System should reject incorrect function names")
+
+
 
 if __name__ == '__main__':
     unittest.main()
