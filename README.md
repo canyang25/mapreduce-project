@@ -20,7 +20,7 @@ The system consists of four main components orchestrated via Docker Compose:
 - **Docker** & **Docker Compose**
 - **Python 3.x** (for the local CLI wrapper)
 
-## ⚡ Quick Start
+## Quick Start
 
 We provide a wrapper script `map_reduce.py` to simplify cluster interactions.
 To learn more about the CLI tool, run:
@@ -135,7 +135,7 @@ docker compose logs client, nn, dn -f
 docker compose down
 ```
 
-## 👥 Team
+## Team
 - Canyang Zhao
 - Sid Ganesh
 - Ryan Murphy
