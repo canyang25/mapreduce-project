@@ -57,6 +57,9 @@ def run_map_reduce_job(
     file_paths: List[str],
     num_maps: int,
     num_reducers: int,
+    iterator: str = None,
+    map_fn: str = 'map_function',
+    reduce_fn: str = 'reduce_function'
 ):
     """
     High-level entry: upload the job script, run MapReduce, print results.
@@ -81,7 +84,7 @@ def run_map_reduce_job(
     # 2. Run distributed MapReduce
     print("Starting MapReduce job...")
     try:
-        response = client.map_reduce(file_paths, 'map_function', 'reduce_function', uploaded_job_script, num_maps, num_reducers, 'iterator_fn')
+        response = client.map_reduce(file_paths, map_fn, reduce_fn, uploaded_job_script, num_maps, num_reducers, iterator)
     except Exception as e:
         print(f"MapReduce job failed")
         return
@@ -130,6 +133,24 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Number of reducers to use (default: 2).",
     )
+    parser.add_argument(
+        "--iterator",
+        type=str,
+        default=None,
+        help="Optional iterator function name defined in the job file (default: None).",
+    )
+    parser.add_argument(
+        "--map_fn",
+        type=str,
+        default="map_function",
+        help="Optional map function name defined in the job file (default: None).",
+    )
+    parser.add_argument(
+        "--reduce_fn",
+        type=str,
+        default="reduce_function",
+        help="Optional reduce function name defined in the job file (default: None).",
+    )
 
     args = parser.parse_args()
     args.maps = len(args.files)
@@ -145,6 +166,9 @@ def main():
         file_paths=args.files,
         num_maps=args.maps,
         num_reducers=args.reducers,
+        iterator=args.iterator,
+        map_fn=args.map_fn,
+        reduce_fn=args.reduce_fn
     )
 
 
