@@ -162,7 +162,12 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
             fs = get_hdfs()
             reduce_fn = load_user_function(request.job_path, request.function_name)
             selector = FileSelector(request.input_dir, recursive=False)
-            infos = fs.get_file_info(selector)
+            try:
+                infos = fs.get_file_info(selector)
+            except Exception as e:
+                # Listing can fail if HDFS consults a dead DataNode; continue best-effort.
+                LOG.warning(f"[reduce] Unable to list {request.input_dir}: {e}")
+                infos = []
 
             files = [
                 info.path
@@ -172,7 +177,13 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
 
             tables = []
             for path in files:
-                tables.append(pq.read_table(path, filesystem=fs))
+                try:
+                    tables.append(pq.read_table(path, filesystem=fs))
+                except Exception as e:
+                    LOG.warning(
+                        f"[reduce] Skipping unreadable file {path} (likely from dead worker): {e}"
+                    )
+                    continue
 
             if tables:
                 merged = pa.concat_tables(tables)

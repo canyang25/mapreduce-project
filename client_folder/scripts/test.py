@@ -32,6 +32,17 @@ class TestClient(unittest.TestCase):
         # Give time for HDFS to be ready
         time.sleep(5)
     
+    def tearDown(self):
+        """Clean HDFS output after each test to avoid DataNode issues."""
+        import subprocess
+        # Clean up output directory to prevent stale DataNode references
+        subprocess.run(
+            ['docker', 'exec', 'mapreduce-project-nn-1', 
+             'hdfs', 'dfs', '-rm', '-r', '-f', '/output/*'],
+            capture_output=True, check=False
+        )
+        time.sleep(1)
+    
     # Helper functions
 
     def run_job_locally(self, job_script: str, file_paths: list[str]):
