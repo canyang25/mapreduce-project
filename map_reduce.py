@@ -57,7 +57,11 @@ def map_reduce(
     cmd = ["docker", "compose", "exec", "client", "python3", "-m", "client_folder.scripts.interactive_client",
            "--job", f"{job_path}",
            "--files"] + inputs + [
-           "--reducers", str(num_reducers)
+           "--reducers", str(num_reducers),
+            "--maps", str(num_mappers),
+            "--map_fn", map_fn,
+            "--reduce_fn", reduce_fn,
+            "--iterator", iterator_fn if iterator_fn else ""
     ]
     out = subprocess.run(cmd, check=True, capture_output=True)
     print(out.stdout.decode())
@@ -113,8 +117,8 @@ def parse_args() -> argparse.Namespace:
     p_map_reduce = subparsers.add_parser("map_reduce", help="Run a MapReduce job.")
     p_map_reduce.add_argument("job_file", help="Path to the local Python job file")
     p_map_reduce.add_argument("inputs", nargs="+", help="Input file paths in HDFS")
-    p_map_reduce.add_argument("--map", dest="map_fn", default="map", help="Map function name (default: map_fn)")
-    p_map_reduce.add_argument("--reduce", dest="reduce_fn", default="reduce", help="Reduce function name (default: reduce_fn)")
+    p_map_reduce.add_argument("--map", dest="map_fn", default="map_function", help="Map function name (default: map_fn)")
+    p_map_reduce.add_argument("--reduce", dest="reduce_fn", default="reduce_function", help="Reduce function name (default: reduce_fn)")
     p_map_reduce.add_argument("--num-reducers", type=int, default=4, help="Number of reducers (default: 1)")
     p_map_reduce.add_argument("--iterator", dest="iterator_fn", default=None, help="Iterator function name (optional)")
 
