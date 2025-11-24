@@ -439,7 +439,7 @@ class RegistryServicer(worker_to_master_pb2_grpc.RegistryServicer):
             return worker_to_master_pb2.HeartbeatReply(ok=False, message=str(e))
 
 def make_master_server(client_bind = '[::]:50051', worker_bind = '[::]:8081'):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     master_client_pb2_grpc.add_MasterClientServicer_to_server(MasterClientService(), server)
     worker_to_master_pb2_grpc.add_RegistryServicer_to_server(RegistryServicer(), server)
     server.add_insecure_port(client_bind)

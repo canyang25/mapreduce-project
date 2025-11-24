@@ -214,7 +214,7 @@ class WorkerTaskServicer(master_to_worker_pb2_grpc.WorkerTaskServicer):
             return master_to_worker_pb2.Ack(ok=False, message=str(e))
 
 def start_task_server():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
     master_to_worker_pb2_grpc.add_WorkerTaskServicer_to_server(WorkerTaskServicer(), server)
     server.add_insecure_port(f"[::]:{TASK_SERVER_PORT}")
     server.start()
