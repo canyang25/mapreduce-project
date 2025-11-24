@@ -63,22 +63,20 @@ def map_reduce(
     print(out.stdout.decode())
 
     # Prepare the job submission request
-    
-def parse_args() -> argparse.Namespace:
-    usage_msg = """
+usage_msg = """
 map_reduce.py – Manage a MapReduce cluster and submit jobs via gRPC.
 
 Commands:
   start                           Build and start the cluster (docker compose).
   stop                            Tear down the cluster (docker compose down).
   upload_data                     Upload all files in client_folder/data to HDFS.
-  logs <service> [...]            Show logs for one or more services - master, worker, client (default all).
   map_reduce <job_file> <inputs>  Run a MapReduce job to completion with specified job path and input path(local).
          [--map MAP_FN]           Optional map function name (default: 'map').
          [--reduce REDUCE_FN]     Optional reduce function name (default: 'reduce').
          [--num-reducers N]       Optional number of reducers (default: 4).
          [--num-mappers N]        Optional number of mappers (default: 4).
          [--iterator ITERATOR_FN] Optional iterator function name (default: None).
+  help                           Show this help message.
 
 Examples:
   python3 map_reduce.py start
@@ -86,11 +84,13 @@ Examples:
   python3 map_reduce.py submit job.py hdfs/data/file1.txt hdfs/data/file2.txt \
         --map=my_map --reduce=my_reduce --num-reducers=3
 """
+def parse_args() -> argparse.Namespace:
+    global usage_msg
     parser = argparse.ArgumentParser(
         prog="map_reduce",
         description="Manage a MapReduce cluster and submit jobs.",
         usage=usage_msg,
-        add_help=False
+        add_help=True
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -152,7 +152,7 @@ def main():
         )
     elif command == "help" or command is None:
         # Show general help if unknown command
-        parse_args()
+        print(usage_msg)
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         parse_args()
